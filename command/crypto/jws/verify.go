@@ -4,11 +4,13 @@ import (
 	"os"
 
 	"github.com/pkg/errors"
+	"github.com/urfave/cli"
+
+	"github.com/smallstep/cli-utils/errs"
+	"go.step.sm/crypto/jose"
+
 	"github.com/smallstep/cli/flags"
 	"github.com/smallstep/cli/utils"
-	"github.com/urfave/cli"
-	"go.step.sm/cli-utils/errs"
-	"go.step.sm/crypto/jose"
 )
 
 func verifyCommand() cli.Command {
@@ -78,7 +80,7 @@ be encoded using Base64.`,
 }
 
 // Get the public key for a JWK.
-func publicKey(jwk *jose.JSONWebKey) interface{} {
+func publicKey(jwk *jose.JSONWebKey) any {
 	if jose.IsSymmetric(jwk) {
 		return jwk.Key
 	}

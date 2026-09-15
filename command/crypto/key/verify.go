@@ -10,11 +10,14 @@ import (
 	"fmt"
 
 	"github.com/pkg/errors"
-	"github.com/smallstep/cli/utils"
 	"github.com/urfave/cli"
-	"go.step.sm/cli-utils/command"
-	"go.step.sm/cli-utils/errs"
+
+	"github.com/smallstep/cli-utils/command"
+	"github.com/smallstep/cli-utils/errs"
+	"go.step.sm/crypto/mldsa"
 	"go.step.sm/crypto/pemutil"
+
+	"github.com/smallstep/cli/utils"
 )
 
 func verifyCommand() cli.Command {
@@ -149,6 +152,8 @@ func verifyAction(ctx *cli.Context) error {
 		return printAndReturn(rsa.VerifyPKCS1v15(k, opts.HashFunc(), digest, sig) == nil)
 	case ed25519.PublicKey:
 		return printAndReturn(ed25519.Verify(k, b, sig))
+	case *mldsa.PublicKey:
+		return printAndReturn(mldsa.Verify(k, b, sig, nil) == nil)
 	default:
 		return errors.Errorf("unsupported public key %s", keyFile)
 	}

@@ -20,21 +20,24 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"github.com/urfave/cli"
+
 	"github.com/smallstep/certificates/api"
 	"github.com/smallstep/certificates/ca"
 	"github.com/smallstep/certificates/pki"
-	"github.com/smallstep/cli/flags"
-	"github.com/smallstep/cli/token"
-	"github.com/smallstep/cli/utils"
-	"github.com/smallstep/cli/utils/cautils"
-	"github.com/smallstep/cli/utils/sysutils"
-	"github.com/urfave/cli"
-	"go.step.sm/cli-utils/command"
-	"go.step.sm/cli-utils/errs"
-	"go.step.sm/cli-utils/ui"
+	"github.com/smallstep/cli-utils/command"
+	"github.com/smallstep/cli-utils/errs"
+	"github.com/smallstep/cli-utils/fileutil"
+	"github.com/smallstep/cli-utils/ui"
 	"go.step.sm/crypto/jose"
 	"go.step.sm/crypto/pemutil"
 	"go.step.sm/crypto/x509util"
+
+	"github.com/smallstep/cli/flags"
+	"github.com/smallstep/cli/internal/cryptoutil"
+	"github.com/smallstep/cli/token"
+	"github.com/smallstep/cli/utils/cautils"
+	"github.com/smallstep/cli/utils/sysutils"
 )
 
 func renewCertificateCommand() cli.Command {
@@ -45,7 +48,7 @@ func renewCertificateCommand() cli.Command {
 		UsageText: `**step ca renew** <crt-file> <key-file>
 [**--mtls**] [**--password-file**=<file>] [**--out**=<file>] [**--expires-in**=<duration>]
 [**--force**] [**--pid**=<int>] [**--pid-file**=<file>] [**--signal**=<int>]
-[**--exec**=<string>] [**--daemon**] [**--renew-period**=<duration>]
+[**--exec**=<string>] [**--daemon**] [**--renew-period**=<duration>] [**--kms**=<uri>]
 [**--ca-url**=<uri>] [**--root**=<file>] [**--context**=<name>]`,
 		Description: `
 **step ca renew** command renews the given certificate (with a request to the
@@ -100,6 +103,18 @@ $ step ca renew --force internal.crt internal.key
 Renew a certificate using the token flow instead of mTLS:
 '''
 $ step ca renew --mtls=false --force internal.crt internal.key
+'''
+
+Renew a certificate which key is in a KMS:
+'''
+$ step ca renew yubikey.crt 'yubikey:slot-id=9a?pin-value=123456'
+'''
+
+Renew a certificate which key is in a KMS, using the <--kms> flag:
+'''
+$ step ca renew \
+  --kms 'pkcs11:module-path=/usr/local/lib/softhsm/libsofthsm2.so;token=smallstep?pin-value=password' \
+  pkcs11.crt 'pkcs11:id=4001'
 '''
 
 Renew a certificate providing the <--ca-url> and <--root> flags:
@@ -157,6 +172,7 @@ authorization flow instead.`,
 			flags.Force,
 			flags.Offline,
 			flags.PasswordFile,
+			flags.KMSUri,
 			cli.StringFlag{
 				Name:  "out,output-file",
 				Usage: "The new certificate <file> path. Defaults to overwriting the <crt-file> positional argument",
@@ -226,6 +242,7 @@ func renewCertificateAction(ctx *cli.Context) error {
 	passFile := ctx.String("password-file")
 	isDaemon := ctx.Bool("daemon")
 	execCmd := ctx.String("exec")
+	kmsURI := ctx.String("kms")
 
 	outFile := ctx.String("out")
 	if outFile == "" {
@@ -288,7 +305,7 @@ func renewCertificateAction(ctx *cli.Context) error {
 		return errs.InvalidFlagValue(ctx, "signal", strconv.Itoa(signum), "")
 	}
 
-	cert, err := tlsLoadX509KeyPair(certFile, keyFile, passFile)
+	cert, err := tlsLoadX509KeyPair(kmsURI, certFile, keyFile, passFile)
 	if err != nil {
 		return err
 	}
@@ -418,9 +435,8 @@ func newRenewer(ctx *cli.Context, caURL string, cert tls.Certificate, rootFile s
 	tr := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		TLSClientConfig: &tls.Config{
-			RootCAs:                  rootCAs,
-			PreferServerCipherSuites: true,
-			MinVersion:               tls.VersionTLS12,
+			RootCAs:    rootCAs,
+			MinVersion: tls.VersionTLS12,
 		},
 	}
 
@@ -483,14 +499,14 @@ func (r *renewer) Renew(outFile string) (resp *api.SignResponse, err error) {
 		}
 		data = append(data, pem.EncodeToMemory(pemblk)...)
 	}
-	if err := utils.WriteFile(outFile, data, 0600); err != nil {
+	if err := fileutil.WriteFile(outFile, data, 0o600); err != nil {
 		return nil, errs.FileError(err, outFile)
 	}
 
 	return resp, nil
 }
 
-func (r *renewer) Rekey(priv interface{}, outCert, outKey string, writePrivateKey bool) (*api.SignResponse, error) {
+func (r *renewer) Rekey(priv any, outCert, outKey string, writePrivateKey bool) (*api.SignResponse, error) {
 	csrBytes, err := x509.CreateCertificateRequest(cryptoRand.Reader, &x509.CertificateRequest{}, priv)
 	if err != nil {
 		return nil, err
@@ -514,11 +530,11 @@ func (r *renewer) Rekey(priv interface{}, outCert, outKey string, writePrivateKe
 		}
 		data = append(data, pem.EncodeToMemory(pemblk)...)
 	}
-	if err := utils.WriteFile(outCert, data, 0600); err != nil {
+	if err := fileutil.WriteFile(outCert, data, 0o600); err != nil {
 		return nil, errs.FileError(err, outCert)
 	}
 	if writePrivateKey {
-		_, err = pemutil.Serialize(priv, pemutil.ToFile(outKey, 0600))
+		_, err = pemutil.Serialize(priv, pemutil.ToFile(outKey, 0o600))
 		if err != nil {
 			return nil, err
 		}
@@ -618,7 +634,7 @@ func (r *renewer) RenewWithToken(cert tls.Certificate) (*api.SignResponse, error
 		x5c = append(x5c, base64.StdEncoding.EncodeToString(b))
 	}
 	if claims.ExtraHeaders == nil {
-		claims.ExtraHeaders = make(map[string]interface{})
+		claims.ExtraHeaders = make(map[string]any)
 	}
 	claims.ExtraHeaders[jose.X5cInsecureKey] = x5c
 
@@ -636,7 +652,7 @@ func (r *renewer) RenewWithToken(cert tls.Certificate) (*api.SignResponse, error
 	return r.client.RenewWithToken(tok)
 }
 
-func tlsLoadX509KeyPair(certFile, keyFile, passFile string) (tls.Certificate, error) {
+func tlsLoadX509KeyPair(kms, certFile, keyFile, passFile string) (tls.Certificate, error) {
 	x509Chain, err := pemutil.ReadCertificateBundle(certFile)
 	if err != nil {
 		return tls.Certificate{}, errs.Wrap(err, "error reading certificate chain")
@@ -650,14 +666,13 @@ func tlsLoadX509KeyPair(certFile, keyFile, passFile string) (tls.Certificate, er
 	if passFile != "" {
 		opts = append(opts, pemutil.WithPasswordFile(passFile))
 	}
-	pk, err := pemutil.Read(keyFile, opts...)
+	signer, err := cryptoutil.CreateSigner(kms, keyFile, opts...)
 	if err != nil {
-		return tls.Certificate{}, errs.Wrap(err, "error parsing private key")
+		return tls.Certificate{}, errs.Wrap(err, "error loading private key")
 	}
-
 	return tls.Certificate{
 		Certificate: x509ChainBytes,
-		PrivateKey:  pk,
+		PrivateKey:  signer,
 		Leaf:        x509Chain[0],
 	}, nil
 }

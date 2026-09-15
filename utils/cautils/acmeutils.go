@@ -26,18 +26,20 @@ import (
 	"github.com/pkg/errors"
 	"github.com/urfave/cli"
 
-	"go.step.sm/cli-utils/errs"
-	"go.step.sm/cli-utils/ui"
-	"go.step.sm/crypto/jose"
-	"go.step.sm/crypto/keyutil"
-	"go.step.sm/crypto/pemutil"
-	"go.step.sm/crypto/tpm"
-	tpmstorage "go.step.sm/crypto/tpm/storage"
-
 	"github.com/smallstep/certificates/acme"
 	acmeAPI "github.com/smallstep/certificates/acme/api"
 	"github.com/smallstep/certificates/ca"
 	"github.com/smallstep/certificates/pki"
+	"github.com/smallstep/cli-utils/errs"
+	"github.com/smallstep/cli-utils/fileutil"
+	"github.com/smallstep/cli-utils/ui"
+	"go.step.sm/crypto/jose"
+	"go.step.sm/crypto/keyutil"
+	"go.step.sm/crypto/mldsa"
+	"go.step.sm/crypto/pemutil"
+	"go.step.sm/crypto/tpm"
+	tpmstorage "go.step.sm/crypto/tpm/storage"
+
 	"github.com/smallstep/cli/flags"
 	"github.com/smallstep/cli/internal/cryptoutil"
 	"github.com/smallstep/cli/utils"
@@ -140,13 +142,13 @@ func (wm *webrootMode) Run() error {
 	// the one running the `step` command that will write the file.
 	chPath := fmt.Sprintf("%s/.well-known/acme-challenge", wm.dir)
 	if _, err = os.Stat(chPath); os.IsNotExist(err) {
-		if err = os.MkdirAll(chPath, 0755); err != nil {
+		if err = os.MkdirAll(chPath, 0o755); err != nil {
 			return errors.Wrapf(err, "error creating directory path %s", chPath)
 		}
 	}
 
 	//nolint:gosec // See note above.
-	return errors.Wrapf(os.WriteFile(fmt.Sprintf("%s/%s", chPath, wm.token), []byte(keyAuth), 0644),
+	return errors.Wrapf(os.WriteFile(fmt.Sprintf("%s/%s", chPath, wm.token), []byte(keyAuth), 0o644),
 		"error writing key authorization file %s", chPath+wm.token)
 }
 
@@ -295,7 +297,7 @@ func validateSANsForACME(sans []string) ([]string, []net.IP, error) {
 	return dnsNames, ips, nil
 }
 
-func createNewOrderRequest(ctx *cli.Context, acmeDir, subject string, sans []string) (interface{}, []string, []net.IP, error) {
+func createNewOrderRequest(ctx *cli.Context, acmeDir, subject string, sans []string) (any, []string, []net.IP, error) {
 	dnsNames, ips, err := validateSANsForACME(sans)
 	if err != nil {
 		return nil, nil, nil, err
@@ -394,8 +396,8 @@ type attestationPayload struct {
 }
 
 type attestationObject struct {
-	Format       string                 `json:"fmt"`
-	AttStatement map[string]interface{} `json:"attStmt,omitempty"`
+	Format       string         `json:"fmt"`
+	AttStatement map[string]any `json:"attStmt,omitempty"`
 }
 
 // doDeviceAttestation performs `device-attest-01` challenge validation.
@@ -442,6 +444,19 @@ func doDeviceAttestation(clictx *cli.Context, ac *ca.ACMEClient, ch *acme.Challe
 		alg = -8 // EdDSA
 		opts = crypto.Hash(0)
 		digest = []byte(data)
+	case *mldsa.PublicKey:
+		switch k.Parameters() {
+		case mldsa.MLDSA44():
+			alg = -48 // ML-DSA-44
+		case mldsa.MLDSA65():
+			alg = -49 // ML-DSA-65
+		case mldsa.MLDSA87():
+			alg = -50 // ML-DSA-87
+		default:
+			return fmt.Errorf("unsupportted ML-DSA parameter %q", k.Parameters().String())
+		}
+		opts = crypto.Hash(0)
+		digest = []byte(data)
 	default:
 		return fmt.Errorf("unsupported public key type %T", k)
 	}
@@ -473,7 +488,7 @@ func doDeviceAttestation(clictx *cli.Context, ac *ca.ACMEClient, ch *acme.Challe
 	// omitted as described in the device-attest-01 RFC.
 	obj := &attestationObject{
 		Format: "step",
-		AttStatement: map[string]interface{}{
+		AttStatement: map[string]any{
 			"alg": alg,
 			"sig": sig,
 			"x5c": x5c,
@@ -520,7 +535,7 @@ func getChallengeStatus(ac *ca.ACMEClient, ch *acme.Challenge, durationBetweenAt
 		vch     *acme.Challenge
 		err     error
 	)
-	for attempts := 0; attempts < 10; attempts++ {
+	for range 10 {
 		vch, err = ac.GetChallenge(ch.URL) // TODO(hs): GetChallenge should return an ACME GetChallenge client response type; not core acme.Challenge type (for safety)
 		if err != nil {
 			return errors.Wrapf(err, "error retrieving ACME Challenge at %s", ch.URL)
@@ -614,7 +629,7 @@ type acmeFlow struct {
 	ctx             *cli.Context
 	provisionerName string
 	csr             *x509.CertificateRequest
-	priv            interface{}
+	priv            any
 	subject         string
 	sans            []string
 	acmeDir         string
@@ -709,7 +724,7 @@ func (af *acmeFlow) getClientTruststoreOption(mergeRootCAs bool) (ca.ClientOptio
 func (af *acmeFlow) GetCertificate() ([]*x509.Certificate, error) {
 	var (
 		err             error
-		newOrderRequest interface{}
+		newOrderRequest any
 		dnsNames        []string
 		ips             []net.IP
 	)
@@ -864,7 +879,7 @@ func (af *acmeFlow) GetCertificate() ([]*x509.Certificate, error) {
 }
 
 func writeCert(chain []*x509.Certificate, certFile string) error {
-	var certBytes = []byte{}
+	certBytes := []byte{}
 	for _, c := range chain {
 		certBytes = append(certBytes, pem.EncodeToMemory(&pem.Block{
 			Type:  "CERTIFICATE",
@@ -872,7 +887,7 @@ func writeCert(chain []*x509.Certificate, certFile string) error {
 		})...)
 	}
 
-	if err := utils.WriteFile(certFile, certBytes, 0600); err != nil {
+	if err := fileutil.WriteFile(certFile, certBytes, 0o600); err != nil {
 		return errs.FileError(err, certFile)
 	}
 	return nil

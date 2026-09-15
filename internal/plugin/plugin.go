@@ -8,7 +8,8 @@ import (
 	"strings"
 
 	"github.com/urfave/cli"
-	"go.step.sm/cli-utils/step"
+
+	"github.com/smallstep/cli-utils/step"
 )
 
 // LookPath searches for an executable named step-<name>-plugin in the $(step
@@ -23,7 +24,7 @@ func LookPath(name string) (string, error) {
 		var exts []string
 		x := os.Getenv(`PATHEXT`)
 		if x != "" {
-			for _, e := range strings.Split(strings.ToLower(x), `;`) {
+			for e := range strings.SplitSeq(strings.ToLower(x), `;`) {
 				if e == "" {
 					continue
 				}
@@ -37,7 +38,7 @@ func LookPath(name string) (string, error) {
 		}
 		for _, ext := range exts {
 			path := filepath.Join(step.BasePath(), "plugins", fileName+ext)
-			if _, err := os.Stat(path); err == nil {
+			if _, err := os.Stat(path); err == nil { // #nosec G703 -- path to stat intentionally relies on (partial) user configuration
 				return path, nil
 			}
 		}

@@ -10,10 +10,10 @@
 [![Twitter followers](https://img.shields.io/twitter/follow/smallsteplabs.svg?label=Follow&style=social)](https://twitter.com/intent/follow?screen_name=smallsteplabs)
 
 `step` is an easy-to-use CLI tool for building, operating, and automating Public Key Infrastructure (PKI) systems and workflows.
-It's the client counterpart to the [`step-ca` online Certificate Authority (CA)](https://github.com/smallstep/certificates).
+It's also a client for the [`step-ca` online Certificate Authority (CA)](https://github.com/smallstep/certificates) server.
 You can use it for many common crypto and X.509 operations—either independently, or with an online CA.
 
-**Questions? Ask us on [GitHub Discussions](https://github.com/smallstep/certificates/discussions) or [Discord](https://bit.ly/step-discord).**
+**Questions? Ask us on [GitHub Discussions](https://github.com/smallstep/certificates/discussions) or [Discord](https://u.step.sm/discord).**
 
 [Website](https://smallstep.com) |
 [Documentation](https://smallstep.com/docs/step-cli) |
@@ -54,7 +54,7 @@ Step CLI's command groups illustrate its wide-ranging uses:
   - [Generate and verify](https://smallstep.com/docs/step-cli/reference/crypto/otp/) TOTP tokens for multi-factor authentication (MFA)
   - Work with [NaCl](https://nacl.cr.yp.to/)'s high-speed tools for encryption and
       signing
-  - [Apply key derivation functions](https://smallstep.com/docs/step-cli/reference/crypto/kdf/) (KDFs) and [verify passwords](https://smallstep.com/docs/step-cli/reference/crypto/kdf/compare/) using `scrypt`, `bcrypt`, and `argo2`
+  - [Apply key derivation functions](https://smallstep.com/docs/step-cli/reference/crypto/kdf/) (KDFs) and [verify passwords](https://smallstep.com/docs/step-cli/reference/crypto/kdf/compare/) using `scrypt`, `bcrypt`, and `argon2`
   - Generate and check [file hashes](https://smallstep.com/docs/step-cli/reference/crypto/hash/)
 
 - [`step oauth`](https://smallstep.com/docs/step-cli/reference/oauth/): Add an OAuth 2.0 single sign-on flow to any CLI application.
@@ -78,10 +78,32 @@ Here's a quick example, combining `step oauth` and `step crypto` to get and veri
 
 ![Animated terminal showing step in practice](https://smallstep.com/images/blog/2018-08-07-unfurl.gif)
 
+## Plugins
+
+A plugin is an executable file named using the format `step-<name>-plugin`.
+Plugins must be available in your `$PATH` or in the `$STEPPATH/plugins`
+directory (that's `$HOME/.step/plugins`, by default).
+
+When you run `step <name>`, the CLI will automatically execute the corresponding
+plugin, if found.
+
+Some known plugins include:
+
+- [**step-kms-plugin**](https://github.com/smallstep/step-kms-plugin): Manage
+keys and certificates stored in a KMS, including HSMs, TPMs, YubiKeys, the macOS
+Keychain, and cloud KMSs.
+- [**step-kmsproxy-plugin**](https://github.com/orbit-online/step-kmsproxy-plugin):
+Provides an HSM/KMS-backed authenticating proxy for mTLS services. Thanks to
+[@andsens](https://github.com/andsens) for creating and maintaining this plugin!
+
+`step-kms-plugin` is also integrated directly into `step` to create
+certificates, generate CSRs, sign tokens, and more using KMS-backed keys.
+
 ## Community
 
-* Connect with `step` users on [GitHub Discussions](https://github.com/smallstep/certificates/discussions) or [Discord](https://bit.ly/step-discord)
+* Connect with `step` users on [GitHub Discussions](https://github.com/smallstep/certificates/discussions) or [Discord](https://u.step.sm/discord)
 * [Open an issue](https://github.com/smallstep/cli/issues/new/choose) and tell us what features you'd like to see
+* [Contribute](./docs/CONTRIBUTING.md) to the `step` codebase
 * [Follow Smallstep on Twitter](https://twitter.com/smallsteplabs)
 
 ## Further Reading

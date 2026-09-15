@@ -13,19 +13,23 @@ import (
 	"strings"
 
 	"github.com/pkg/errors"
+	"github.com/urfave/cli"
+
+	"github.com/smallstep/cli-utils/errs"
+	"github.com/smallstep/cli-utils/ui"
+	"github.com/smallstep/linkedca"
+	"go.step.sm/crypto/jose"
+	"go.step.sm/crypto/mldsa"
+	"go.step.sm/crypto/pemutil"
+
 	"github.com/smallstep/cli/flags"
+	"github.com/smallstep/cli/internal/cast"
 	"github.com/smallstep/cli/internal/sliceutil"
 	"github.com/smallstep/cli/utils"
-	"github.com/urfave/cli"
-	"go.step.sm/cli-utils/errs"
-	"go.step.sm/cli-utils/ui"
-	"go.step.sm/crypto/jose"
-	"go.step.sm/crypto/pemutil"
-	"go.step.sm/linkedca"
 )
 
 func addCommand() cli.Command {
-	return cli.Command{
+	return cli.Command{ // #nosec G101 -- Google OIDC example values
 		Name:   "add",
 		Action: cli.ActionFunc(addAction),
 		Usage:  "add a provisioner",
@@ -93,11 +97,13 @@ K8SSA (Kubernetes Service Account)
 IID (AWS/GCP/Azure)
 
 **step ca provisioner add** <name> **--type**=[AWS|Azure|GCP]
-[**--aws-account**=<id>] [**--gcp-service-account**=<name>] [**--gcp-project**=<name>]
+[**--aws-account**=<id>]
+[**--gcp-service-account**=<name>] [**--gcp-project**=<name>] [**--gcp-organization**=<id>]
 [**--azure-tenant**=<id>] [**--azure-resource-group**=<name>]
 [**--azure-audience**=<name>] [**--azure-subscription-id**=<id>]
 [**--azure-object-id**=<id>] [**--instance-age**=<duration>] [**--iid-roots**=<file>]
 [**--disable-custom-sans**] [**--disable-trust-on-first-use**]
+[**--disable-ssh-ca-user**] [**--disable-ssh-ca-host**]
 [**--admin-cert**=<file>] [**--admin-key**=<file>]
 [**--admin-subject**=<subject>] [**--admin-provisioner**=<name>] [**--admin-password-file**=<file>]
 [**--ca-url**=<uri>] [**--root**=<file>] [**--context**=<name>] [**--ca-config**=<file>]
@@ -167,9 +173,12 @@ SCEP
 			azureObjectIDFlag,
 			gcpServiceAccountFlag,
 			gcpProjectFlag,
+			gcpOrganizationFlag,
 			instanceAgeFlag,
 			disableCustomSANsFlag,
 			disableTOFUFlag,
+			disableSSHCAUserFlag,
+			disableSSHCAHostFlag,
 
 			// Claims
 			x509TemplateFlag,
@@ -283,10 +292,15 @@ $ step ca provisioner add Azure --type Azure \
   --azure-object-id f50926c7-abbf-4c28-87dc-9adc7eaf3ba7
 '''
 
-Create an GCP provisioner that will only accept the SANs provided in the identity token:
+Create a GCP provisioner that will only accept the SANs provided in the identity token:
 '''
 $ step ca provisioner add Google --type GCP \
   --disable-custom-sans --gcp-project internal
+'''
+
+Create a GCP provisioner that can be used across all projects within an organization:
+'''
+$ step ca provisioner add Google --type GCP --gcp-organization 123456789
 '''
 
 Create an AWS provisioner that will only accept the SANs provided in the identity
@@ -379,7 +393,7 @@ func addAction(ctx *cli.Context) (err error) {
 		Ssh: &linkedca.SSHClaims{
 			UserDurations: &linkedca.Durations{},
 			HostDurations: &linkedca.Durations{},
-			Enabled:       !(ctx.IsSet("ssh") && !ctx.Bool("ssh")),
+			Enabled:       !(ctx.IsSet("ssh") && !ctx.Bool("ssh")), //nolint:staticcheck // TODO(hs): fix this
 		},
 		DisableRenewal:             ctx.Bool("disable-renewal"),
 		AllowRenewalAfterExpiry:    ctx.Bool("allow-renewal-after-expiry"),
@@ -674,7 +688,7 @@ func createK8SSADetails(ctx *cli.Context) (*linkedca.ProvisionerDetails, error) 
 	var (
 		block   *pem.Block
 		rest    = pemKeysB
-		pemKeys = []interface{}{}
+		pemKeys = []any{}
 	)
 	for rest != nil {
 		block, rest = pem.Decode(rest)
@@ -686,7 +700,7 @@ func createK8SSADetails(ctx *cli.Context) (*linkedca.ProvisionerDetails, error) 
 			return nil, errors.Wrapf(err, "error parsing public key from %s", pemKeysF)
 		}
 		switch q := key.(type) {
-		case *rsa.PublicKey, *ecdsa.PublicKey, ed25519.PublicKey:
+		case *rsa.PublicKey, *ecdsa.PublicKey, ed25519.PublicKey, *mldsa.PublicKey:
 		default:
 			return nil, errors.Errorf("Unexpected public key type %T in %s", q, pemKeysF)
 		}
@@ -742,6 +756,13 @@ func createOIDCDetails(ctx *cli.Context) (*linkedca.ProvisionerDetails, error) {
 }
 
 func createAWSDetails(ctx *cli.Context) (*linkedca.ProvisionerDetails, error) {
+	if ctx.IsSet("disable-ssh-ca-user") {
+		return nil, errors.New("flag disable-ssh-ca-user is not supported for AWS IID provisioners")
+	}
+	if ctx.IsSet("disable-ssh-ca-host") {
+		return nil, errors.New("flag disable-ssh-ca-host is not supported for AWS IID provisioners")
+	}
+
 	d, err := parseInstanceAge(ctx)
 	if err != nil {
 		return nil, err
@@ -762,6 +783,13 @@ func createAWSDetails(ctx *cli.Context) (*linkedca.ProvisionerDetails, error) {
 }
 
 func createAzureDetails(ctx *cli.Context) (*linkedca.ProvisionerDetails, error) {
+	if ctx.IsSet("disable-ssh-ca-user") {
+		return nil, errors.New("flag disable-ssh-ca-user is not supported for Azure IID provisioners")
+	}
+	if ctx.IsSet("disable-ssh-ca-host") {
+		return nil, errors.New("flag disable-ssh-ca-host is not supported for Azure IID provisioners")
+	}
+
 	tenantID := ctx.String("azure-tenant")
 	if tenantID == "" {
 		return nil, errs.RequiredWithFlagValue(ctx, "type", ctx.String("type"), "azure-tenant")
@@ -783,9 +811,27 @@ func createAzureDetails(ctx *cli.Context) (*linkedca.ProvisionerDetails, error) 
 }
 
 func createGCPDetails(ctx *cli.Context) (*linkedca.ProvisionerDetails, error) {
+	if ctx.String("gcp-organization") != "" && len(ctx.StringSlice("gcp-project")) > 0 {
+		return nil, errs.IncompatibleFlagWithFlag(ctx, "gcp-organization", "gcp-project")
+	}
+
 	d, err := parseInstanceAge(ctx)
 	if err != nil {
 		return nil, err
+	}
+
+	var (
+		disableSSHCAUser *bool
+		disableSSHCAHost *bool
+	)
+
+	if ctx.IsSet("disable-ssh-ca-user") {
+		boolVal := ctx.Bool("disable-ssh-ca-user")
+		disableSSHCAUser = &boolVal
+	}
+	if ctx.IsSet("disable-ssh-ca-host") {
+		boolVal := ctx.Bool("disable-ssh-ca-host")
+		disableSSHCAHost = &boolVal
 	}
 
 	return &linkedca.ProvisionerDetails{
@@ -793,8 +839,11 @@ func createGCPDetails(ctx *cli.Context) (*linkedca.ProvisionerDetails, error) {
 			GCP: &linkedca.GCPProvisioner{
 				ServiceAccounts:        ctx.StringSlice("gcp-service-account"),
 				ProjectIds:             ctx.StringSlice("gcp-project"),
+				OrganizationId:         ctx.String("gcp-organization"),
 				DisableCustomSans:      ctx.Bool("disable-custom-sans"),
 				DisableTrustOnFirstUse: ctx.Bool("disable-trust-on-first-use"),
+				DisableSshCaUser:       disableSSHCAUser,
+				DisableSshCaHost:       disableSSHCAHost,
 				InstanceAge:            d,
 			},
 		},
@@ -811,10 +860,10 @@ func createSCEPDetails(ctx *cli.Context) (*linkedca.ProvisionerDetails, error) {
 		ForceCn:                       ctx.Bool("force-cn"),
 		Challenge:                     challenge,
 		Capabilities:                  ctx.StringSlice("capabilities"),
-		MinimumPublicKeyLength:        int32(ctx.Int("min-public-key-length")),
+		MinimumPublicKeyLength:        cast.Int32(ctx.Int("min-public-key-length")),
 		IncludeRoot:                   ctx.Bool("include-root"),
 		ExcludeIntermediate:           ctx.Bool("exclude-intermediate"),
-		EncryptionAlgorithmIdentifier: int32(ctx.Int("encryption-algorithm-identifier")),
+		EncryptionAlgorithmIdentifier: cast.Int32(ctx.Int("encryption-algorithm-identifier")),
 	}
 	decrypter := &linkedca.SCEPDecrypter{}
 	if decrypterCertificateFile := ctx.String("scep-decrypter-certificate-file"); decrypterCertificateFile != "" {

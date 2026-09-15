@@ -5,15 +5,17 @@ import (
 	"strings"
 
 	"github.com/pkg/errors"
+	"github.com/urfave/cli"
+
+	"github.com/smallstep/cli-utils/command"
+	"github.com/smallstep/cli-utils/errs"
+	"github.com/smallstep/cli-utils/step"
+	"github.com/smallstep/cli-utils/ui"
+	"go.step.sm/crypto/pemutil"
+
 	"github.com/smallstep/cli/flags"
 	"github.com/smallstep/cli/token"
 	"github.com/smallstep/cli/utils/cautils"
-	"github.com/urfave/cli"
-	"go.step.sm/cli-utils/command"
-	"go.step.sm/cli-utils/errs"
-	"go.step.sm/cli-utils/step"
-	"go.step.sm/cli-utils/ui"
-	"go.step.sm/crypto/pemutil"
 )
 
 func certificateCommand() cli.Command {
@@ -26,7 +28,7 @@ func certificateCommand() cli.Command {
 [**--not-before**=<time|duration>] [**--not-after**=<time|duration>]
 [**--san**=<SAN>] [**--set**=<key=value>] [**--set-file**=<file>]
 [**--acme**=<file>] [**--standalone**] [**--webroot**=<file>]
-[**--contact**=<email>] [**--http-listen**=<address>] [**--bundle**]
+[**--contact**=<email>] [**--http-listen**=<address>]
 [**--kty**=<type>] [**--curve**=<curve>] [**--size**=<size>] [**--console**]
 [**--x5c-cert**=<file>] [**--x5c-key**=<file>] [**--k8ssa-token-path**=<file>]
 [**--offline**] [**--password-file**] [**--ca-url**=<uri>] [**--root**=<file>]
@@ -105,6 +107,13 @@ $ step ca certificate foo.internal foo.crt foo.key --kty RSA --size 4096
 Request a new certificate with an X5C provisioner:
 '''
 $ step ca certificate foo.internal foo.crt foo.key --x5c-cert x5c.cert --x5c-key x5c.key
+'''
+
+Request a new certificate with an X5C provisioner using a certificate and private key stored on a YubiKey:
+'''
+$ step ca certificate joe@example.com joe.crt joe.key \
+  --x5c-cert yubikey:slot-id=9a \
+  --x5c-key 'yubikey:slot-id=9a?pin=value=123456'
 '''
 
 **Certificate Templates** - With a provisioner configured with a custom
@@ -226,10 +235,16 @@ func certificateAction(ctx *cli.Context) error {
 	offline := ctx.Bool("offline")
 	sans := ctx.StringSlice("san")
 
-	// offline and token are incompatible because the token is generated before
-	// the start of the offline CA.
-	if offline && tok != "" {
+	switch {
+	case offline && tok != "":
+		// offline and token are incompatible because the token is generated before
+		// the start of the offline CA.
 		return errs.IncompatibleFlagWithFlag(ctx, "offline", "token")
+	case ctx.String("attestation-uri") != "" && ctx.String("kms") != "":
+		// attestation-uri and kms are incompatible because the ACME-DA flow
+		// expects all necessary parameters in the attestation-uri, and having
+		// both can be confusing.
+		return errs.IncompatibleFlagWithFlag(ctx, "attestation-uri", "kms")
 	}
 
 	// certificate flow unifies online and offline flows on a single api

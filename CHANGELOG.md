@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ### Added
 
+- Support for inspecting certificates with post-quantum algorithms ML-DSA and
+  SLH-DSA (smallstep/certinfo#69).
+
 ### Changed
 
 ### Deprecated
@@ -25,6 +28,157 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ### Security
 
 ---
+
+## [0.30.3] - 2026-06-09
+
+### Added
+
+- Add support for inspecting certificates with post-quantum algorithms ML-DSA and
+  SLH-DSA (smallstep/certinfo#69, smallstep/cli#1605).
+
+### Fixed
+
+- Fix file paths being misidentified as KMS URIs when the path didn't match a KMS
+  URI pattern; detection now uses an existence check instead (smallstep/cli#1604).
+- Fix `step ssh proxycommand` hanging when the server closes the connection before
+  stdin is closed (smallstep/cli#1647).
+
+
+## [0.30.2] - 2026-03-22
+
+- Update certificates to v0.30.2
+
+
+## [0.30.1] - 2026-03-18
+
+- Fix release issue
+
+
+## [0.30.0] - 2026-03-18
+
+### Added
+
+- Allow using KMS URIs directly without the `--kms` flag for commands that use
+  the cryptoutils package (smallstep/cli#1560).
+
+### Changed
+
+- Expand `--kms` flag help text with detailed documentation for all supported
+  KMS types (YubiKey PIV, PKCS #11, TPM 2.0, Google Cloud KMS, AWS KMS, Azure
+  Key Vault) and usage examples (smallstep/cli#1550).
+- Prefer `verification_uri_complete` over `verification_uri` in the OIDC
+  Device Authorization Flow when the IdP provides it, so users don't need to
+  manually enter a code (smallstep/cli#1430).
+- Skip printing the user code during OIDC device authorization when the
+  complete verification URI already embeds it (smallstep/cli#1595).
+- Suppress output messages for `step certificate needs-renewal` and `step ssh
+  needs-renewal` commands when certificates don't need renewal. Use the
+  `--verbose` flag to always show messages regardless of renewal status
+  (smallstep/cli#1548).
+
+### Fixed
+
+- Overwrite file when using --force with step crypto key format (smallstep/cli#1581)
+
+
+## [0.29.0] - 2025-12-02
+
+### Added
+
+- Add PKIX fingerprint support for `step crypto key fingerprint` (smallstep/cli#1474)
+- Add remote configuration of the provisioner GCP organization id (smallstep/cli#1490)
+
+### Changed
+
+- Do not create an identity token if it's not enabled (smallstep/cli#1495).
+- Make --attestation-uri incompatible with --kms for `step ca certificate` (smallstep/cli#1516)
+
+## [0.28.7] - 2025-07-13
+
+### Added
+
+- Add support for specifying key usage, extended key usage, and basic constraints
+  in certificate requests (smallstep/crypto#767)
+- Ensure HOMEDRIVE is used, on Windows, when locating SSH config file (smallstep/cli#1434)
+
+### Changed
+
+- Enable alternate SSH agents for `step ssh` on Windows (smallstep/cli#1428)
+- Refactor CLI to enable testing via testscript (smallstep/cli#1426)
+
+### Fixed
+
+- Fix step ca token help text around validity period flags (smallstep/cli#1411)
+- Fix some provisioner and policy prompt issues (smallstep/cli#1391)
+    * SCEP provisioners not detected in admin token flows. They now return an error,
+      similar to ACME provisioners, if selected.
+    * Invalid provisioner selection logic when managing provisioner policies.
+      The --provisioner flag was used to select a provisioner to authenticate
+      as well as the provisioner to manage policies for.
+    * Unexpected error messages showing "issuer" instead of "provisioner" flag. In certain
+      situations the CLI would return error messages indicating an issue with the --issuer
+      flag value, whereas it was actually supplied in the --provisioner flag.
+
+
+## [0.28.6] - 2025-03-17
+
+- dependabot updates
+
+## [0.28.5] - 2025-03-05
+
+- v0.28.4 skipped due to broken CI
+
+### Added
+
+- Add the --set and --set-file flags to the step ca token command, allowing the user to set keys in the "user" claim in the resulting JWT. (smallstep/cli#1375)
+- Support for downloading additional default settings when running 'step ssh config' (smallstep/cli#1377)
+    - 'min-password-length' and 'provisioner'
+
+
+## [0.28.3] - 2025-02-20
+
+### Added
+
+- Add support for KMS in the ca renew and rekey commands (smallstep/cli#1353)
+
+### Fixed
+
+- Correctly handle redirect-url flag when bootstrapping (smallstep/cli#1350)
+
+
+## [0.28.2] - 2024-11-20
+
+### Fixed
+
+- Broken release process
+
+
+## [0.28.1] - 2024-11-19
+
+### Changed
+
+- Updated smallstep/certinfo package (smallstep/cli#1309)
+
+
+## [0.28.0] - 2024-10-29
+
+### Added
+
+- disableSSHCAUser and disableSSHCAHost options to GCP provisioner create and update commands (smallstep/cli#1305)
+- Support programmatically opening browser on Android devices (smallstep/cli#1301)
+
+### Fixed
+
+- Fix --context being ignored in commands that rely on certificates (smallstep/cli#1301)
+
+
+## [0.27.5] - 2024-10-17
+
+### Added
+
+- Add `--remove-scope` flag to provisioner update command. Removes the given
+  scope, used to validate the scopes extension in an OpenID Connect token (smallstep/cli#1287)
+
 
 ## [0.27.4] - 2024-09-13
 
@@ -158,11 +312,11 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - Detect OIDC tokens issued by Kubernetes (smallstep/cli#953)
 - Add support for Smallstep Managed Endpoint X509 extension
   (smallstep/cli#989)
-- Support signing a certificate for a private key that can only be used for 
-  encryption with the `--skip-csr-signature` flag in `step certificate create`. 
-  Some KMSs restrict key usage to a single type of cryptographic operation. 
-  This blocks RSA decryption keys from being used to sign a CSR for their public 
-  key. Using the `--skip-csr-signature` flag, the public key is used directly 
+- Support signing a certificate for a private key that can only be used for
+  encryption with the `--skip-csr-signature` flag in `step certificate create`.
+  Some KMSs restrict key usage to a single type of cryptographic operation.
+  This blocks RSA decryption keys from being used to sign a CSR for their public
+  key. Using the `--skip-csr-signature` flag, the public key is used directly
   with a certificate template, removing the need for the CSR signature.
 - Add all AWS identity document certificates (smallstep/certificates#1510)
 - Add SCEP decrypter configuration flags (smallstep/cli#950)
@@ -172,8 +326,8 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 ### Changed
 
 - Increase PBKDF2 iterations to 600k (smallstep/cli#949)
-- `--kms` flag is no longer used for the CA (signing) key for 
-`step certificate create`. It was replaced by the `--ca-kms` flag 
+- `--kms` flag is no longer used for the CA (signing) key for
+`step certificate create`. It was replaced by the `--ca-kms` flag
 (smallstep/cli#942).
 - Hide `step oauth command` on failure (smallstep/cli#993)
 
@@ -188,7 +342,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 - `step certificate format` correctly parse PEM files with non-PEM header
   (smallstep/cli#1006)
 - Fix TOFU flag in `ca provisioner update` (smallstep/cli#941)
-- Make `--team` incompatible with `--fingerprint` and `--ca-url` in 
+- Make `--team` incompatible with `--fingerprint` and `--ca-url` in
   `step ca bootstrap (smallstep/cli#1017)
 
 ### Remove
@@ -209,7 +363,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 ## [v0.24.3] - 2023-04-14
 
-### Added 
+### Added
 
 - Storing of certificate chain for TPM keys in TPM storage (smallstep/cli#915)
 
@@ -217,7 +371,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/spec/v2.0.0.
 
 - The enrolment URL path used when enrolling with an attestation CA (smallstep/cli#915)
 
-### Fixed 
+### Fixed
 
 - Issue with CLI reference not showing curly braces correctly (smallstep/cli#916)
 - Word wrapping for `step api token` example (smallstep/cli#917)

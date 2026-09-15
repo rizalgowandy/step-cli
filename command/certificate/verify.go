@@ -9,14 +9,17 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/pkg/errors"
+	"github.com/urfave/cli"
+	"golang.org/x/crypto/ocsp"
+
+	"github.com/smallstep/cli-utils/errs"
+	"go.step.sm/crypto/x509util"
+
 	"github.com/smallstep/cli/flags"
 	"github.com/smallstep/cli/internal/crlutil"
-	"github.com/urfave/cli"
-	"go.step.sm/cli-utils/errs"
-	"go.step.sm/crypto/x509util"
-	"golang.org/x/crypto/ocsp"
 )
 
 func verifyCommand() cli.Command {
@@ -241,14 +244,14 @@ func verifyAction(ctx *cli.Context) error {
 		return errors.Wrapf(err, "failed to verify certificate")
 	}
 
-	verboseMSG := "certificate validated against roots\n"
+	var verboseMSG strings.Builder
+	verboseMSG.WriteString("certificate validated against roots\n")
 	if host != "" {
-		verboseMSG += "certificate host name validated\n"
+		verboseMSG.WriteString("certificate host name validated\n")
 	}
 
 	switch {
 	case (verifyCRL || verifyOCSP) && roots != "":
-		//nolint:gosec // using default configuration for 3rd party endpoints
 		tlsConfig := &tls.Config{
 			RootCAs: rootPool,
 		}
@@ -321,7 +324,7 @@ func verifyAction(ctx *cli.Context) error {
 			respReceived, err := VerifyCRLEndpoint(endpoint, cert, issuer, httpClient, insecure)
 			switch {
 			case err == nil:
-				verboseMSG += fmt.Sprintf("certificate not revoked in CRL %s\n", endpoint)
+				fmt.Fprintf(&verboseMSG, "certificate not revoked in CRL %s\n", endpoint)
 				crlVerified = true
 				break crlOut
 			case respReceived:
@@ -354,7 +357,7 @@ func verifyAction(ctx *cli.Context) error {
 			respReceived, err := VerifyOCSPEndpoint(endpoint, cert, issuer, httpClient)
 			switch {
 			case err == nil:
-				verboseMSG += fmt.Sprintf("certificate status is good according OCSP %s\n", endpoint)
+				fmt.Fprintf(&verboseMSG, "certificate status is good according OCSP %s\n", endpoint)
 				ocspVerified = true
 				break ocspOut
 			case respReceived:
@@ -371,7 +374,7 @@ func verifyAction(ctx *cli.Context) error {
 	}
 
 	if verbose {
-		fmt.Println(verboseMSG + "certficiate is valid")
+		fmt.Println(verboseMSG.String() + "certficiate is valid")
 	}
 	return nil
 }
@@ -387,7 +390,7 @@ func VerifyOCSPEndpoint(endpoint string, cert, issuer *x509.Certificate, httpCli
 		return false, errors.Errorf("error contacting OCSP server: %s", endpoint)
 	}
 	httpReq.Header.Add("Content-Type", "application/ocsp-request")
-	httpResp, err := httpClient.Do(httpReq)
+	httpResp, err := httpClient.Do(httpReq) // #nosec G704 -- request relies on values from certificate or intentionally provided by user
 	if err != nil {
 		return false, errors.Errorf("error contacting OCSP server: %s", endpoint)
 	}

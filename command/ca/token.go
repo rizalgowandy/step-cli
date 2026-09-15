@@ -5,16 +5,19 @@ import (
 	"os"
 
 	"github.com/pkg/errors"
+	"github.com/urfave/cli"
+
 	"github.com/smallstep/certificates/api"
 	"github.com/smallstep/certificates/pki"
+	"github.com/smallstep/cli-utils/command"
+	"github.com/smallstep/cli-utils/errs"
+	"github.com/smallstep/cli-utils/fileutil"
+	"go.step.sm/crypto/pemutil"
+	"golang.org/x/crypto/ssh"
+
 	"github.com/smallstep/cli/flags"
 	"github.com/smallstep/cli/utils"
 	"github.com/smallstep/cli/utils/cautils"
-	"github.com/urfave/cli"
-	"go.step.sm/cli-utils/command"
-	"go.step.sm/cli-utils/errs"
-	"go.step.sm/crypto/pemutil"
-	"golang.org/x/crypto/ssh"
 )
 
 func tokenCommand() cli.Command {
@@ -32,7 +35,8 @@ func tokenCommand() cli.Command {
 [**--sshpop-cert**=<file>] [**--sshpop-key**=<file>]
 [**--cnf**=<fingerprint>] [**--cnf-file**=<file>]
 [**--ssh**] [**--host**] [**--principal**=<name>] [**--k8ssa-token-path**=<file>]
-[**--ca-url**=<uri>] [**--root**=<file>] [**--context**=<name>]`,
+[**--ca-url**=<uri>] [**--root**=<file>] [**--context**=<name>]
+[**--set**=<key=value>] [**--set-file**=<file>]`,
 		Description: `**step ca token** command generates a one-time token granting access to the
 certificates authority.
 
@@ -169,9 +173,22 @@ Generate an X5C provisioner token using a certificate in a YubiKey. Note that a
 YubiKey does not support storing a certificate bundle. To make it work, you must
 add the intermediate and the root in the provisioner configuration:
 '''
-$ step ca token --kms yubikey:pin-value=123456 \
-  --x5c-cert yubikey:slot-id=82 --x5c-key yubikey:slot-id=82 \
+$ step ca token \
+  --x5c-cert yubikey:slot-id=82 \
+  --x5c-key 'yubikey:slot-id=82?pin=value=123456' \
   internal.example.com
+'''
+
+Generate a token with custom data in the "user" claim. The example below can be
+accessed in a template as **.Token.user.field**, rendering to the string
+"value".
+
+This is distinct from **.Insecure.User**: any attributes set using this option
+are added to a claim named "user" in the signed JWT produced by this command.
+This data may therefore be considered trusted (insofar as the token itself is
+trusted).
+'''
+$ step ca token --set field=value internal.example.com
 '''`,
 		Flags: []cli.Flag{
 			provisionerKidFlag,
@@ -192,8 +209,22 @@ multiple principals.`,
 			sshHostFlag,
 			flags.CaConfig,
 			flags.Force,
-			flags.NotAfter,
-			flags.NotBefore,
+			cli.StringFlag{
+				Name: "not-before",
+				Usage: `The <time|duration> when the token's validity period starts. If a <time> is
+		used it is expected to be in RFC 3339 format. If a <duration> is used, it is a
+		sequence of decimal numbers, each with optional fraction and a unit suffix, such
+		as "300ms", "-1.5h" or "2h45m". Valid time units are "ns", "us" (or "µs"), "ms",
+		"s", "m", "h".`,
+			},
+			cli.StringFlag{
+				Name: "not-after",
+				Usage: `The <time|duration> when the token's validity period ends. If a <time> is
+		used it is expected to be in RFC 3339 format. If a <duration> is used, it is a
+		sequence of decimal numbers, each with optional fraction and a unit suffix, such
+		as "300ms", "-1.5h" or "2h45m". Valid time units are "ns", "us" (or "µs"), "ms",
+		"s", "m", "h".`,
+			},
 			flags.CertNotAfter,
 			flags.CertNotBefore,
 			flags.Provisioner,
@@ -242,6 +273,8 @@ be invalid for any other API request.`,
 			flags.CaURL,
 			flags.Root,
 			flags.Context,
+			flags.TemplateSet,
+			flags.TemplateSetFile,
 		},
 	}
 }
@@ -348,9 +381,27 @@ func tokenAction(ctx *cli.Context) error {
 		tokenOpts = append(tokenOpts, cautils.WithConfirmationFingerprint(cnf))
 	}
 
+	templateData, err := flags.GetTemplateData(ctx)
+	if err != nil {
+		return err
+	}
+	if templateData != nil {
+		tokenOpts = append(tokenOpts, cautils.WithCustomAttributes(templateData))
+	}
+
 	// --san and --type revoke are incompatible. Revocation tokens do not support SANs.
 	if typ == cautils.RevokeType && len(sans) > 0 {
 		return errs.IncompatibleFlagWithFlag(ctx, "san", "revoke")
+	}
+
+	// --offline doesn't support tokenOpts, so reject set/set-file
+	if offline {
+		if len(ctx.StringSlice("set")) > 0 {
+			return errs.IncompatibleFlagWithFlag(ctx, "offline", "set")
+		}
+		if ctx.String("set-file") != "" {
+			return errs.IncompatibleFlagWithFlag(ctx, "offline", "set-file")
+		}
 	}
 
 	// parse times or durations
@@ -386,7 +437,7 @@ func tokenAction(ctx *cli.Context) error {
 		}
 	}
 	if outputFile != "" {
-		return utils.WriteFile(outputFile, []byte(token), 0600)
+		return fileutil.WriteFile(outputFile, []byte(token), 0o600)
 	}
 	fmt.Println(token)
 	return nil

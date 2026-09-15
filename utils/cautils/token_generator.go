@@ -14,18 +14,20 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"github.com/urfave/cli"
+
 	"github.com/smallstep/certificates/authority/provisioner"
 	"github.com/smallstep/certificates/pki"
+	"github.com/smallstep/cli-utils/errs"
+	"github.com/smallstep/cli-utils/ui"
+	"go.step.sm/crypto/jose"
+	"go.step.sm/crypto/pemutil"
+	"go.step.sm/crypto/randutil"
+
 	"github.com/smallstep/cli/exec"
 	"github.com/smallstep/cli/internal/cryptoutil"
 	"github.com/smallstep/cli/token"
 	"github.com/smallstep/cli/token/provision"
-	"github.com/urfave/cli"
-	"go.step.sm/cli-utils/errs"
-	"go.step.sm/cli-utils/ui"
-	"go.step.sm/crypto/jose"
-	"go.step.sm/crypto/pemutil"
-	"go.step.sm/crypto/randutil"
 )
 
 // TokenGenerator is a helper used to generate different types of tokens used in
@@ -106,6 +108,11 @@ func (t *TokenGenerator) SignToken(sub string, sans []string, opts ...token.Opti
 		opts = append(opts, token.WithConfirmationFingerprint(sharedContext.ConfirmationFingerprint))
 	}
 
+	// Add custom user data, if set.
+	if sharedContext.CustomAttributes != nil {
+		opts = append(opts, token.WithUserData(sharedContext.CustomAttributes))
+	}
+
 	return t.Token(sub, opts...)
 }
 
@@ -123,6 +130,11 @@ func (t *TokenGenerator) SignSSHToken(sub, certType string, principals []string,
 		ValidAfter:  notBefore,
 		ValidBefore: notAfter,
 	})}, opts...)
+
+	// Add custom user data, if set.
+	if sharedContext.CustomAttributes != nil {
+		opts = append(opts, token.WithUserData(sharedContext.CustomAttributes))
+	}
 
 	return t.Token(sub, opts...)
 }
@@ -161,7 +173,7 @@ type tokenAttrs struct {
 	root                        string
 	caURL                       string
 	audience                    string
-	issuer                      string
+	provisionerName             string
 	kid                         string
 	sans                        []string
 	notBefore, notAfter         time.Time
@@ -432,10 +444,11 @@ func generateJWKToken(ctx *cli.Context, p *provisioner.JWK, tokType int, tokAttr
 		return "", err
 	}
 
-	issuer := tokAttrs.issuer
+	issuer := tokAttrs.provisionerName
 	if p != nil {
 		issuer = p.Name
 	}
+
 	// Generate token
 	tokenGen := NewTokenGenerator(kid, issuer, tokAttrs.audience, tokAttrs.root,
 		tokAttrs.notBefore, tokAttrs.notAfter, jwk)
@@ -492,7 +505,7 @@ func generateRenewToken(ctx *cli.Context, aud, sub string) (string, error) {
 		x5c = append(x5c, base64.StdEncoding.EncodeToString(crt.Raw))
 	}
 	if claims.ExtraHeaders == nil {
-		claims.ExtraHeaders = make(map[string]interface{})
+		claims.ExtraHeaders = make(map[string]any)
 	}
 	claims.ExtraHeaders[jose.X5cInsecureKey] = x5c
 

@@ -12,7 +12,8 @@ import (
 	"github.com/pkg/errors"
 	"github.com/urfave/cli"
 	"go.mozilla.org/pkcs7"
-	"go.step.sm/cli-utils/errs"
+
+	"github.com/smallstep/cli-utils/errs"
 )
 
 // Command returns the winpe subcommand.
@@ -66,7 +67,7 @@ func extractPEAction(ctx *cli.Context) error {
 }
 
 func extractPE(filename string) error {
-	file, err := os.Open(filename)
+	file, err := os.Open(filename) // #nosec G703 -- file to open intentionally relies on user configuration
 	if err != nil {
 		return errors.Wrapf(err, "error opening %s", filename)
 	}

@@ -3,6 +3,9 @@
 version: 2
 project_name: step
 
+# Enable GoReleaser OSS to read Pro configs: https://goreleaser.com/errors/version/#using-a-pro-configuration-file-with-goreleaser-oss
+pro: true
+
 variables:
   packageName: step-cli
   packageRelease: 1 # Manually update release: in the nfpm section to match this value if you change this
@@ -22,7 +25,7 @@ builds:
     id: default
     env:
       - CGO_ENABLED=0
-    main: ./cmd/step/main.go
+    main: ./cmd/step
     flags:
       - -trimpath
     ldflags:
@@ -48,16 +51,10 @@ builds:
     binary: bin/step
   -
     # This build is specifically for nFPM targets (.deb and .rpm files).
-    # It's exactly the same as the default build above, except:
-    # - it only builds the archs we want to produce .deb and .rpm files for
-    # - the name of the output binary is step-cli
+    # It's exactly the same as the default build above, except the binary is
+    # named step-cli. It inherits all Linux targets from the default build.
     << : *BUILD
     id: nfpm
-    goos:
-      - linux
-    goarch:
-      - amd64
-      - arm64
     binary: step-cli
 
 archives:
@@ -69,8 +66,8 @@ archives:
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Version }}_{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}{{ if .Mips }}_{{ .Mips }}{{ end }}"
     format_overrides:
       - goos: windows
-        format: zip
-    builds:
+        formats: ['zip']
+    ids:
       - default
     wrap_in_directory: "{{ .ProjectName }}_{{ .Version }}"
     files:
@@ -96,7 +93,7 @@ nfpms:
   #
   - &NFPM
     id: packages
-    builds:
+    ids:
       - nfpm
     package_name: "{{ .Var.packageName }}"
     release: "1"
@@ -132,10 +129,10 @@ nfpms:
       postremove: scripts/postremove.sh
     rpm:
       signature:
-          key_file: "{{ .Env.GPG_PRIVATE_KEY_FILE }}"
+          key_file: '{{ envOrDefault "GPG_PRIVATE_KEY_FILE" "ENV_VAR_GPG_PRIVATE_KEY_FILE_NOT_SET" }}'
     deb:
       signature:
-          key_file: "{{ .Env.GPG_PRIVATE_KEY_FILE }}"
+          key_file: '{{ envOrDefault "GPG_PRIVATE_KEY_FILE" "ENV_VAR_GPG_PRIVATE_KEY_FILE_NOT_SET" }}'
           type: origin
   -
     << : *NFPM
@@ -153,9 +150,12 @@ checksum:
 
 signs:
 - cmd: cosign
-  signature: "${artifact}.sig"
-  certificate: "${artifact}.pem"
-  args: ["sign-blob", "--oidc-issuer=https://token.actions.githubusercontent.com", "--output-certificate=${certificate}", "--output-signature=${signature}", "${artifact}", "--yes"]
+  signature: "${artifact}.sigstore.json"
+  args:
+    - "sign-blob"
+    - "--bundle=${signature}"
+    - "${artifact}"
+    - "--yes"
   artifacts: all
 
 publishers:
@@ -165,7 +165,7 @@ publishers:
   cmd: ./scripts/package-upload.sh {{ abs .ArtifactPath }} {{ .Var.packageName }} {{ .Version }} {{ .Var.packageRelease }}
 
 snapshot:
-  name_template: "{{ .Tag }}-next"
+  version_template: "{{ .Tag }}-next"
 
 release:
   # Repo in which the release will be created.
@@ -233,8 +233,7 @@ release:
 
     ```
     cosign verify-blob \
-      --certificate ~/Download/step_darwin_{{ .Version }}_amd64.tar.gz.pem \
-      --signature ~/Downloads/step_darwin_{{ .Version }}_amd64.tar.gz.sig \
+      --bundle ~/Downloads/step_darwin_{{ .Version }}_amd64.tar.gz.sigstore.json \
       --certificate-identity-regexp "https://github\.com/smallstep/workflows/.*" \
       --certificate-oidc-issuer https://token.actions.githubusercontent.com \
       ~/Downloads/step_darwin_{{ .Version }}_amd64.tar.gz
@@ -277,13 +276,13 @@ blobs:
     extra_files:
       - glob: ./dist/default_darwin_amd64_v1/bin/step
         name_template: step_{{ .Version }}_darwin_amd64
-      - glob: ./dist/default_darwin_arm64/bin/step
+      - glob: ./dist/default_darwin_arm64*/bin/step
         name_template: step_{{ .Version }}_darwin_arm64
       - glob: ./dist/default_linux_amd64_v1/bin/step
         name_template: step_{{ .Version }}_linux_amd64
-      - glob: ./dist/default_linux_arm64/bin/step
+      - glob: ./dist/default_linux_arm64*/bin/step
         name_template: step_{{ .Version }}_linux_arm64
-      - glob: ./dist/default_windows_arm64/bin/step.exe
+      - glob: ./dist/default_windows_amd64_v1/bin/step.exe
         name_template: step_{{ .Version }}_windows_amd64.exe
       - glob: ./dist/default_freebsd_*/bin/step
         name_template: step_{{ .Version }}_freebsd_amd64
@@ -297,13 +296,13 @@ blobs:
     extra_files:
       - glob: ./dist/default_darwin_amd64_v1/bin/step
         name_template: step_latest_darwin_amd64
-      - glob: ./dist/default_darwin_arm64/bin/step
+      - glob: ./dist/default_darwin_arm64*/bin/step
         name_template: step_latest_darwin_arm64
       - glob: ./dist/default_linux_amd64_v1/bin/step
         name_template: step_latest_linux_amd64
-      - glob: ./dist/default_linux_arm64/bin/step
+      - glob: ./dist/default_linux_arm64*/bin/step
         name_template: step_latest_linux_arm64
-      - glob: ./dist/default_windows_arm64/bin/step.exe
+      - glob: ./dist/default_windows_amd64_v1/bin/step.exe
         name_template: step_latest_windows_amd64.exe
       - glob: ./dist/default_freebsd_*/bin/step
         name_template: step_latest_freebsd_amd64
@@ -370,7 +369,12 @@ winget:
     # Your app's long description.
     #
     # Templates: allowed
-    description: ""
+    description: |
+      step-cli lets you build, operate, and automate Public Key Infrastructure (PKI)
+      systems and workflows. It's a swiss army knife for authenticated encryption
+      (X.509, TLS), single sign-on (OAuth OIDC, SAML), multi-factor authentication
+      (OATH OTP, FIDO U2F), encryption mechanisms (JSON Web Encryption, NaCl),
+      and verifiable claims (JWT, SAML assertions).
 
     # License URL.
     #
@@ -385,10 +389,25 @@ winget:
     # Create the PR - for testing
     skip_upload: auto
 
+    # Privacy URL.
+    #
+    # Templates: allowed
+    privacy_url: "https://smallstep.com/privacy-policy"
+
     # Tags.
     tags:
       - cli
       - smallstep
+      - pki
+      - x509
+      - certificates
+      - tls
+      - ssl
+      - jwt
+      - oauth
+      - security
+      - encryption
+      - cryptography
 
     # Repository to push the generated files to.
     repository:
@@ -433,7 +452,7 @@ scoops:
     # Default for github is "https://github.com/<repo_owner>/<repo_name>/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
     # Default for gitlab is "https://gitlab.com/<repo_owner>/<repo_name>/uploads/{{ .ArtifactUploadHash }}/{{ .ArtifactName }}"
     # Default for gitea is "https://gitea.com/<repo_owner>/<repo_name>/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
-    url_template: "http://github.com/smallstep/cli/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
+    url_template: "https://github.com/smallstep/cli/releases/download/{{ .Tag }}/{{ .ArtifactName }}"
 
     # Repository to push the app manifest to.
     repository:

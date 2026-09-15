@@ -3,14 +3,17 @@ package ssh
 import (
 	"fmt"
 	"os"
+	"strings"
 	"text/tabwriter"
 
+	"github.com/urfave/cli"
+
 	"github.com/smallstep/certificates/ca"
+	"github.com/smallstep/cli-utils/command"
+	"github.com/smallstep/cli-utils/errs"
+
 	"github.com/smallstep/cli/flags"
 	"github.com/smallstep/cli/utils/cautils"
-	"github.com/urfave/cli"
-	"go.step.sm/cli-utils/command"
-	"go.step.sm/cli-utils/errs"
 )
 
 func hostsCommand() cli.Command {
@@ -73,14 +76,14 @@ func hostsAction(ctx *cli.Context) error {
 
 	fmt.Fprintln(w, "HOSTNAME\tID\tTAGS")
 	for _, h := range resp.Hosts {
-		tags := ""
+		var tags strings.Builder
 		for i, ht := range h.HostTags {
 			if i > 0 {
-				tags += ","
+				tags.WriteString(",")
 			}
-			tags += ht.Name + "=" + ht.Value
+			tags.WriteString(ht.Name + "=" + ht.Value)
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\n", h.Hostname, h.HostID, tags)
+		fmt.Fprintf(w, "%s\t%s\t%s\n", h.Hostname, h.HostID, tags.String())
 	}
 	w.Flush()
 	return nil

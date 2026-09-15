@@ -4,13 +4,14 @@ import (
 	"fmt"
 	"os"
 
-	"go.step.sm/cli-utils/errs"
-	"go.step.sm/cli-utils/ui"
-
 	"github.com/pkg/errors"
-	"github.com/smallstep/cli/utils"
 	"github.com/urfave/cli"
+
+	"github.com/smallstep/cli-utils/errs"
+	"github.com/smallstep/cli-utils/ui"
 	"go.step.sm/crypto/jose"
+
+	"github.com/smallstep/cli/utils"
 )
 
 func decryptCommand() cli.Command {
@@ -130,7 +131,7 @@ func decryptAction(ctx *cli.Context) error {
 		return err
 	}
 
-	var decryptKey interface{}
+	var decryptKey any
 	if isPBES2 {
 		decryptKey = pbes2Key
 	} else {

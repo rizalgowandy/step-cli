@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-package bcrypt_pbkdf //nolint:stylecheck // keep compatible with existing importers
+package bcrypt_pbkdf //nolint:staticcheck // keep compatible with existing importers
 
 import (
 	"bytes"
@@ -78,7 +78,7 @@ func TestBcryptHash(t *testing.T) {
 	}
 	var pass, salt [64]byte
 	var result [32]byte
-	for i := 0; i < 64; i++ {
+	for i := range 64 {
 		pass[i] = byte(i)
 		salt[i] = byte(i + 64)
 	}

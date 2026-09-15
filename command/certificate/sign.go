@@ -12,14 +12,16 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"github.com/smallstep/cli-utils/errs"
+	"github.com/smallstep/cli-utils/ui"
+	"github.com/urfave/cli"
+	"go.step.sm/crypto/mldsa"
+	"go.step.sm/crypto/pemutil"
+	"go.step.sm/crypto/x509util"
+
 	"github.com/smallstep/cli/flags"
 	"github.com/smallstep/cli/internal/cryptoutil"
 	"github.com/smallstep/cli/utils"
-	"github.com/urfave/cli"
-	"go.step.sm/cli-utils/errs"
-	"go.step.sm/cli-utils/ui"
-	"go.step.sm/crypto/pemutil"
-	"go.step.sm/crypto/x509util"
 )
 
 const customIntermediateTemplate = `{
@@ -166,7 +168,11 @@ $ step certificate sign \
   --kms 'pkcs11:module-path=/usr/local/lib/softhsm/libsofthsm2.so;token=smallstep?pin-value=password' \
   leaf.csr issuer.crt 'pkcs11:id=4001'
 '''
-`,
+
+Sign a CSR using a certificate and a key stored in a KMS:
+'''
+$ step certificate sign leaf.csr yubikey-slot-id=9a 'yubikey-slot-id=9a?pin-value=123456'
+'''`,
 		Flags: []cli.Flag{
 			flags.KMSUri,
 			cli.StringFlag{
@@ -237,6 +243,7 @@ func signAction(ctx *cli.Context) error {
 	csrFile := ctx.Args().Get(0)
 	crtFile := ctx.Args().Get(1)
 	keyFile := ctx.Args().Get(2)
+	kms := ctx.String("kms")
 
 	// Parse certificate request
 	csr, err := pemutil.ReadCertificateRequest(csrFile)
@@ -248,7 +255,7 @@ func signAction(ctx *cli.Context) error {
 	}
 
 	// Parse issuer and issuer key (at least one should be present)
-	issuers, err := pemutil.ReadCertificateBundle(crtFile)
+	issuers, err := cryptoutil.LoadCertificate(kms, crtFile)
 	if err != nil {
 		return err
 	}
@@ -264,7 +271,7 @@ func signAction(ctx *cli.Context) error {
 		opts = append(opts, pemutil.WithPasswordFile(passFile))
 	}
 
-	signer, err := cryptoutil.CreateSigner(ctx.String("kms"), keyFile, opts...)
+	signer, err := cryptoutil.CreateSigner(kms, keyFile, opts...)
 	if err != nil {
 		return err
 	}
@@ -289,7 +296,7 @@ func signAction(ctx *cli.Context) error {
 
 	// Read template if passed. If not use a template depending on the profile.
 	var template string
-	var userData map[string]interface{}
+	var userData map[string]any
 	if templateFile != "" {
 		b, err := utils.ReadFile(templateFile)
 		if err != nil {
@@ -411,6 +418,14 @@ func validateIssuerKey(crt *x509.Certificate, signer crypto.Signer) error {
 		}
 	case ed25519.PublicKey:
 		pk, ok := signer.Public().(ed25519.PublicKey)
+		if !ok {
+			return errors.New("private key type does not match issuer public key type")
+		}
+		if !pub.Equal(pk) {
+			return errors.New("private key does not match issuer public key")
+		}
+	case *mldsa.PublicKey:
+		pk, ok := signer.Public().(*mldsa.PublicKey)
 		if !ok {
 			return errors.New("private key type does not match issuer public key type")
 		}

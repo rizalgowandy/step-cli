@@ -8,16 +8,18 @@ import (
 
 	"github.com/pkg/errors"
 	nebula "github.com/slackhq/nebula/cert"
+	"github.com/urfave/cli"
+
 	"github.com/smallstep/certificates/authority/config"
 	"github.com/smallstep/certificates/authority/provisioner"
 	"github.com/smallstep/certificates/ca"
+	"github.com/smallstep/cli-utils/errs"
+	"github.com/smallstep/cli-utils/ui"
+	"github.com/smallstep/linkedca"
+
 	"github.com/smallstep/cli/command/ca/provisioner/webhook"
 	"github.com/smallstep/cli/utils"
 	"github.com/smallstep/cli/utils/cautils"
-	"github.com/urfave/cli"
-	"go.step.sm/cli-utils/errs"
-	"go.step.sm/cli-utils/ui"
-	"go.step.sm/linkedca"
 )
 
 // Command returns the jwk subcommand.
@@ -514,6 +516,10 @@ Use the flag multiple times to configure multiple projects`,
 		Usage: `Remove a Google project <id> used to validate the identity tokens.
 Use the flag multiple times to remove multiple projects`,
 	}
+	gcpOrganizationFlag = cli.StringFlag{
+		Name:  "gcp-organization",
+		Usage: `The Google organization <id> used to validate the project in the identity tokens.`,
+	}
 	instanceAgeFlag = cli.DurationFlag{
 		Name: "instance-age",
 		Usage: `The maximum <duration> to grant a certificate in AWS and GCP provisioners.
@@ -538,6 +544,16 @@ By default it will accept any SAN in the CSR.`,
 		Usage: `On cloud provisioners, if enabled multiple sign request for this provisioner
 with the same instance will be accepted. By default only the first request
 will be accepted.`,
+	}
+
+	disableSSHCAUserFlag = cli.BoolFlag{
+		Name:  "disable-ssh-ca-user",
+		Usage: `Disable ability to sign SSH user certificates`,
+	}
+
+	disableSSHCAHostFlag = cli.BoolFlag{
+		Name:  "disable-ssh-ca-host",
+		Usage: `Disable ability to sign SSH host certificates`,
 	}
 
 	// Nebula provisioner flags
@@ -610,6 +626,11 @@ Use the '--group' flag multiple times to configure multiple groups.`,
 		Usage: `The <scope> list used to validate the scopes extension in an OpenID Connect token.
 Use the '--scope' flag multiple times to configure multiple scopes.`,
 	}
+	oidcRemoveScopeFlag = cli.StringSliceFlag{
+		Name: "remove-scope",
+		Usage: `Remove the <scope> used to validate the scopes extension in an OpenID Connect token.
+Use the '--remove-scope' flag multiple times to remove multiple scopes.`,
+	}
 	oidcAuthParamFlag = cli.StringSliceFlag{
 		Name: "auth-param",
 		Usage: `The <auth-param> list used to validate the auth-params extension in an OpenID Connect token.
@@ -630,14 +651,14 @@ func readNebulaRoots(rootFile string) ([][]byte, error) {
 		return nil, err
 	}
 
-	var crt *nebula.NebulaCertificate
-	var certs []*nebula.NebulaCertificate
+	var crt nebula.Certificate
+	var certs []nebula.Certificate
 	for len(b) > 0 {
-		crt, b, err = nebula.UnmarshalNebulaCertificateFromPEM(b)
+		crt, b, err = nebula.UnmarshalCertificateFromPEM(b)
 		if err != nil {
 			return nil, errors.Wrapf(err, "error reading %s", rootFile)
 		}
-		if crt.Details.IsCA {
+		if crt.IsCA() {
 			certs = append(certs, crt)
 		}
 	}
@@ -647,7 +668,7 @@ func readNebulaRoots(rootFile string) ([][]byte, error) {
 
 	rootBytes := make([][]byte, len(certs))
 	for i, crt := range certs {
-		b, err = crt.MarshalToPEM()
+		b, err = crt.MarshalPEM()
 		if err != nil {
 			return nil, errors.Wrap(err, "error marshaling certificate")
 		}

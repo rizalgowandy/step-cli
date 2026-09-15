@@ -6,16 +6,18 @@ import (
 	"os"
 
 	"github.com/pkg/errors"
+	"github.com/urfave/cli"
+
 	"github.com/smallstep/certificates/api"
 	"github.com/smallstep/certificates/ca"
 	"github.com/smallstep/certificates/pki"
-	"github.com/smallstep/cli/flags"
-	"github.com/smallstep/cli/utils"
-	"github.com/urfave/cli"
-	"go.step.sm/cli-utils/command"
-	"go.step.sm/cli-utils/errs"
-	"go.step.sm/cli-utils/ui"
+	"github.com/smallstep/cli-utils/command"
+	"github.com/smallstep/cli-utils/errs"
+	"github.com/smallstep/cli-utils/fileutil"
+	"github.com/smallstep/cli-utils/ui"
 	"go.step.sm/crypto/pemutil"
+
+	"github.com/smallstep/cli/flags"
 )
 
 type flowType int
@@ -168,7 +170,7 @@ func rootsAndFederationFlow(ctx *cli.Context, typ flowType) error {
 	}
 
 	if outFile := ctx.Args().Get(0); outFile != "" {
-		if err := utils.WriteFile(outFile, data, 0600); err != nil {
+		if err := fileutil.WriteFile(outFile, data, 0o600); err != nil {
 			return err
 		}
 

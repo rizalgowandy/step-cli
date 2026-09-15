@@ -5,13 +5,16 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/pkg/errors"
 	"github.com/urfave/cli"
-	"go.step.sm/cli-utils/errs"
 
 	"github.com/smallstep/certificates/ca"
+	"github.com/smallstep/cli-utils/errs"
+
 	"github.com/smallstep/cli/flags"
+	"github.com/smallstep/cli/internal/cast"
 	"github.com/smallstep/cli/utils/cautils"
 )
 
@@ -97,8 +100,16 @@ func listAction(ctx *cli.Context) (err error) {
 
 	// prepare the $PAGER command to run when not disabled and when available
 	pager := os.Getenv("PAGER")
+	if strings.ContainsAny(pager, " \t\n;&|<>") {
+		return errors.New("invalid PAGER environment value")
+	}
+
+	if _, err := exec.LookPath(pager); err != nil {
+		return fmt.Errorf("invalid PAGER environment value: %w", err)
+	}
+
 	if usePager && pager != "" {
-		cmd = exec.Command(pager)
+		cmd = exec.Command(pager) // #nosec G702 -- $PAGER is intended to be provided by users; basic validation applied
 		var err error
 		out, err = cmd.StdinPipe()
 		if err != nil {
@@ -122,7 +133,7 @@ func listAction(ctx *cli.Context) (err error) {
 	startedPager := false
 
 	for {
-		options := []ca.AdminOption{ca.WithAdminCursor(cursor), ca.WithAdminLimit(int(limit))}
+		options := []ca.AdminOption{ca.WithAdminCursor(cursor), ca.WithAdminLimit(cast.Int(limit))}
 		eaksResponse, err := client.GetExternalAccountKeysPaginate(provisioner, reference, options...)
 		if err != nil {
 			return errors.Wrap(notImplemented(err), "error retrieving ACME EAB keys")

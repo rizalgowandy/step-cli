@@ -7,16 +7,19 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
-	"github.com/smallstep/cli/flags"
-	"github.com/smallstep/cli/internal/cryptoutil"
-	"github.com/smallstep/cli/utils"
 	"github.com/urfave/cli"
-	"go.step.sm/cli-utils/command"
-	"go.step.sm/cli-utils/errs"
-	"go.step.sm/cli-utils/ui"
+
+	"github.com/smallstep/cli-utils/command"
+	"github.com/smallstep/cli-utils/errs"
+	"github.com/smallstep/cli-utils/fileutil"
+	"github.com/smallstep/cli-utils/ui"
 	"go.step.sm/crypto/keyutil"
 	"go.step.sm/crypto/pemutil"
 	"go.step.sm/crypto/x509util"
+
+	"github.com/smallstep/cli/flags"
+	"github.com/smallstep/cli/internal/cryptoutil"
+	"github.com/smallstep/cli/utils"
 )
 
 const (
@@ -327,7 +330,17 @@ $ step certificate create --csr --template csr.tpl --san coyote@acme.corp \
   "Wile E. Coyote" coyote.csr coyote.key
 '''
 
+Create a CSR using <step-kms-plugin>:
+'''
+$ step certificate create --csr --key 'yubikey:slot-id=9a?pin=value=123456' coyote@acme.corp coyote.csr
+'''
+
 Create a root certificate using <step-kms-plugin>:
+'''
+$ step certificate create --profile root-ca --key 'yubikey:slot-id=9a?pin=value=123456' 'KMS Root' root_ca.crt
+'''
+
+Create a root certificate using <step-kms-plugin> and the <--kms> flag:
 '''
 $ step kms create \
   --kms 'pkcs11:module-path=/usr/local/lib/softhsm/libsofthsm2.so;token=smallstep?pin-value=password' \
@@ -614,7 +627,7 @@ func createAction(ctx *cli.Context) error {
 			}
 		}
 
-		if err = utils.WriteFile(crtFile, pem.EncodeToMemory(block), 0600); err != nil {
+		if err = fileutil.WriteFile(crtFile, pem.EncodeToMemory(block), 0o600); err != nil {
 			return errs.FileError(err, crtFile)
 		}
 
@@ -679,7 +692,7 @@ func createAction(ctx *cli.Context) error {
 	templateData := x509util.CreateTemplateData(subject, sans)
 	templateData.SetUserData(userData)
 
-	var certTemplate = &x509.Certificate{}
+	certTemplate := &x509.Certificate{}
 	if skipCSRSignature {
 		certTemplate.PublicKey = pub
 		certificate, err := x509util.NewCertificateFromX509(certTemplate, x509util.WithTemplate(template, templateData))
@@ -745,7 +758,7 @@ func createAction(ctx *cli.Context) error {
 		}
 	}
 
-	if err = utils.WriteFile(crtFile, pubBytes, 0600); err != nil {
+	if err = fileutil.WriteFile(crtFile, pubBytes, 0o600); err != nil {
 		return errs.FileError(err, crtFile)
 	}
 
@@ -896,10 +909,10 @@ func parseSigner(ctx *cli.Context, defaultSigner crypto.Signer) (*x509.Certifica
 }
 
 // savePrivateKey saves the given key, asking the password if necessary.
-func savePrivateKey(ctx *cli.Context, filename string, priv interface{}, insecure bool) error {
+func savePrivateKey(ctx *cli.Context, filename string, priv any, insecure bool) error {
 	var err error
 	if insecure {
-		_, err = pemutil.Serialize(priv, pemutil.ToFile(filename, 0600))
+		_, err = pemutil.Serialize(priv, pemutil.ToFile(filename, 0o600))
 		return err
 	}
 
@@ -916,6 +929,6 @@ func savePrivateKey(ctx *cli.Context, filename string, priv interface{}, insecur
 			return errors.Wrap(err, "error reading password")
 		}
 	}
-	_, err = pemutil.Serialize(priv, pemutil.WithPassword(pass), pemutil.ToFile(filename, 0600))
+	_, err = pemutil.Serialize(priv, pemutil.WithPassword(pass), pemutil.ToFile(filename, 0o600))
 	return err
 }

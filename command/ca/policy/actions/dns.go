@@ -6,7 +6,8 @@ import (
 	"fmt"
 
 	"github.com/urfave/cli"
-	"go.step.sm/cli-utils/errs"
+
+	"github.com/smallstep/cli-utils/errs"
 
 	"github.com/smallstep/cli/command/ca/policy/policycontext"
 	"github.com/smallstep/cli/flags"
@@ -73,7 +74,7 @@ $ step ca policy authority ssh host allow dns "badsshhost.local"
 			dnsAction,
 		),
 		Flags: []cli.Flag{
-			provisionerFilterFlag,
+			flags.Provisioner,
 			flags.EABKeyID,
 			flags.EABReference,
 			cli.BoolFlag{
@@ -93,9 +94,12 @@ $ step ca policy authority ssh host allow dns "badsshhost.local"
 }
 
 func dnsAction(ctx context.Context) (err error) {
-	clictx := command.CLIContextFromContext(ctx)
+	var (
+		provisioner = retrieveAndUnsetProvisionerFlagIfRequired(ctx)
+		clictx      = command.CLIContextFromContext(ctx)
+		args        = clictx.Args()
+	)
 
-	args := clictx.Args()
 	if len(args) == 0 {
 		return errs.TooFewArguments(clictx)
 	}
@@ -105,7 +109,7 @@ func dnsAction(ctx context.Context) (err error) {
 		return fmt.Errorf("error creating admin client: %w", err)
 	}
 
-	policy, err := retrieveAndInitializePolicy(ctx, client)
+	policy, err := retrieveAndInitializePolicy(ctx, client, provisioner)
 	if err != nil {
 		return fmt.Errorf("error retrieving policy: %w", err)
 	}
@@ -137,7 +141,7 @@ func dnsAction(ctx context.Context) (err error) {
 		panic("no SSH nor X.509 context set")
 	}
 
-	updatedPolicy, err := updatePolicy(ctx, client, policy)
+	updatedPolicy, err := updatePolicy(ctx, client, policy, provisioner)
 	if err != nil {
 		return fmt.Errorf("error updating policy: %w", err)
 	}

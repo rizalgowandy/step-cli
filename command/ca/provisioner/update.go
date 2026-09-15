@@ -11,16 +11,21 @@ import (
 	"os"
 
 	"github.com/pkg/errors"
+	"github.com/urfave/cli"
+
 	"github.com/smallstep/certificates/ca"
+	"github.com/smallstep/cli-utils/errs"
+	"github.com/smallstep/cli-utils/ui"
+
+	"github.com/smallstep/linkedca"
+	"go.step.sm/crypto/jose"
+	"go.step.sm/crypto/mldsa"
+	"go.step.sm/crypto/pemutil"
+
 	"github.com/smallstep/cli/flags"
+	"github.com/smallstep/cli/internal/cast"
 	"github.com/smallstep/cli/internal/sliceutil"
 	"github.com/smallstep/cli/utils"
-	"github.com/urfave/cli"
-	"go.step.sm/cli-utils/errs"
-	"go.step.sm/cli-utils/ui"
-	"go.step.sm/crypto/jose"
-	"go.step.sm/crypto/pemutil"
-	"go.step.sm/linkedca"
 )
 
 func updateCommand() cli.Command {
@@ -85,10 +90,12 @@ IID (AWS/GCP/Azure)
 [**--aws-account**=<id>]... [**--remove-aws-account**=<id>]...
 [**--gcp-service-account**=<name>]... [**--remove-gcp-service-account**=<name>]...
 [**--gcp-project**=<name>]... [**--remove-gcp-project**=<name>]...
+[**--gcp-organization**=<id>]
 [**--azure-tenant**=<id>] [**--azure-resource-group**=<name>]
 [**--azure-audience**=<name>] [**--azure-subscription-id**=<id>]
 [**--azure-object-id**=<id>] [**--instance-age**=<duration>]
 [**--disable-custom-sans**] [**--disable-trust-on-first-use**]
+[**--disable-ssh-ca-user**] [**--disable-ssh-ca-host**]
 [**--admin-cert**=<file>] [**--admin-key**=<file>]
 [**--admin-subject**=<subject>] [**--admin-provisioner**=<name>] [**--admin-password-file**=<file>]
 [**--ca-url**=<uri>] [**--root**=<file>] [**--context**=<name>] [**--ca-config**=<file>]
@@ -126,6 +133,7 @@ SCEP
 			oidcGroupFlag,
 			oidcTenantIDFlag,
 			oidcScopeFlag,
+			oidcRemoveScopeFlag,
 			oidcAuthParamFlag,
 
 			// X5C Root Flag
@@ -169,9 +177,12 @@ SCEP
 			removeGCPServiceAccountFlag,
 			gcpProjectFlag,
 			removeGCPProjectFlag,
+			gcpOrganizationFlag,
 			instanceAgeFlag,
 			disableCustomSANsFlag,
 			disableTOFUFlag,
+			disableSSHCAUserFlag,
+			disableSSHCAHostFlag,
 
 			// Claims
 			x509TemplateFlag,
@@ -279,6 +290,18 @@ Update a GCP provisioner:
 '''
 $ step ca provisioner update Google \
   --disable-custom-sans --gcp-project internal --remove-gcp-project public
+'''
+
+Remove the GCP project and use an organization id:
+'''
+$ step ca provisioner update Google \
+  --gpc-organization 123456789 --remove-gcp-project internal
+'''
+
+Remove the GCP organization and use a project:
+'''
+$ step ca provisioner update Google \
+  --gpc-organization="" --gcp-project internal
 '''
 
 Update an AWS provisioner:
@@ -730,7 +753,7 @@ func updateK8SSADetails(ctx *cli.Context, p *linkedca.Provisioner) error {
 		var (
 			block   *pem.Block
 			rest    = pemKeysB
-			pemKeys = []interface{}{}
+			pemKeys = []any{}
 		)
 		for rest != nil {
 			block, rest = pem.Decode(rest)
@@ -742,7 +765,7 @@ func updateK8SSADetails(ctx *cli.Context, p *linkedca.Provisioner) error {
 				return errors.Wrapf(err, "error parsing public key from %s", pemKeysF)
 			}
 			switch q := key.(type) {
-			case *rsa.PublicKey, *ecdsa.PublicKey, ed25519.PublicKey:
+			case *rsa.PublicKey, *ecdsa.PublicKey, ed25519.PublicKey, *mldsa.PublicKey:
 			default:
 				return errors.Errorf("Unexpected public key type %T in %s", q, pemKeysF)
 			}
@@ -822,6 +845,13 @@ func updateOIDCDetails(ctx *cli.Context, p *linkedca.Provisioner) error {
 }
 
 func updateAWSDetails(ctx *cli.Context, p *linkedca.Provisioner) error {
+	if ctx.IsSet("disable-ssh-ca-user") {
+		return errors.New("flag disable-ssh-ca-user is not supported for AWS IID provisioners")
+	}
+	if ctx.IsSet("disable-ssh-ca-host") {
+		return errors.New("flag disable-ssh-ca-host is not supported for AWS IID provisioners")
+	}
+
 	data, ok := p.Details.GetData().(*linkedca.ProvisionerDetails_AWS)
 	if !ok {
 		return errors.New("error casting details to AWS type")
@@ -851,6 +881,13 @@ func updateAWSDetails(ctx *cli.Context, p *linkedca.Provisioner) error {
 }
 
 func updateAzureDetails(ctx *cli.Context, p *linkedca.Provisioner) error {
+	if ctx.IsSet("disable-ssh-ca-user") {
+		return errors.New("flag disable-ssh-ca-user is not supported for Azure IID provisioners")
+	}
+	if ctx.IsSet("disable-ssh-ca-host") {
+		return errors.New("flag disable-ssh-ca-host is not supported for Azure IID provisioners")
+	}
+
 	data, ok := p.Details.GetData().(*linkedca.ProvisionerDetails_Azure)
 	if !ok {
 		return errors.New("error casting details to Azure type")
@@ -910,11 +947,22 @@ func updateGCPDetails(ctx *cli.Context, p *linkedca.Provisioner) error {
 	if ctx.IsSet("disable-trust-on-first-use") {
 		details.DisableTrustOnFirstUse = ctx.Bool("disable-trust-on-first-use")
 	}
+	if ctx.IsSet("disable-ssh-ca-user") {
+		boolVal := ctx.Bool("disable-ssh-ca-user")
+		details.DisableSshCaUser = &boolVal
+	}
+	if ctx.IsSet("disable-ssh-ca-host") {
+		boolVal := ctx.Bool("disable-ssh-ca-host")
+		details.DisableSshCaHost = &boolVal
+	}
 	if ctx.IsSet("remove-gcp-service-account") {
 		details.ServiceAccounts = removeElements(details.ServiceAccounts, ctx.StringSlice("remove-gcp-service-account"))
 	}
 	if ctx.IsSet("gcp-service-account") {
 		details.ServiceAccounts = append(details.ServiceAccounts, ctx.StringSlice("gcp-service-account")...)
+	}
+	if ctx.IsSet("gcp-organization") {
+		details.OrganizationId = ctx.String("gcp-organization")
 	}
 	if ctx.IsSet("remove-gcp-project") {
 		details.ProjectIds = removeElements(details.ProjectIds, ctx.StringSlice("remove-gcp-project"))
@@ -922,6 +970,12 @@ func updateGCPDetails(ctx *cli.Context, p *linkedca.Provisioner) error {
 	if ctx.IsSet("gcp-project") {
 		details.ProjectIds = append(details.ProjectIds, ctx.StringSlice("gcp-project")...)
 	}
+
+	// Validate configuration
+	if details.OrganizationId != "" && len(details.ProjectIds) > 0 {
+		return errs.IncompatibleFlagWithFlag(ctx, "gcp-organization", "gcp-project")
+	}
+
 	return nil
 }
 
@@ -942,7 +996,7 @@ func updateSCEPDetails(ctx *cli.Context, p *linkedca.Provisioner) error {
 		details.Capabilities = ctx.StringSlice("capabilities")
 	}
 	if ctx.IsSet("min-public-key-length") {
-		details.MinimumPublicKeyLength = int32(ctx.Int("min-public-key-length"))
+		details.MinimumPublicKeyLength = cast.Int32(ctx.Int("min-public-key-length"))
 	}
 	if ctx.IsSet("include-root") {
 		details.IncludeRoot = ctx.Bool("include-root")
@@ -951,7 +1005,7 @@ func updateSCEPDetails(ctx *cli.Context, p *linkedca.Provisioner) error {
 		details.ExcludeIntermediate = ctx.Bool("exclude-intermediate")
 	}
 	if ctx.IsSet("encryption-algorithm-identifier") {
-		details.EncryptionAlgorithmIdentifier = int32(ctx.Int("encryption-algorithm-identifier"))
+		details.EncryptionAlgorithmIdentifier = cast.Int32(ctx.Int("encryption-algorithm-identifier"))
 	}
 
 	decrypter := details.GetDecrypter()

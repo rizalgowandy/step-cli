@@ -10,12 +10,14 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
-	"github.com/smallstep/certificates/api"
-	"github.com/smallstep/cli/utils"
 	"github.com/urfave/cli"
-	"go.step.sm/cli-utils/errs"
-	"go.step.sm/cli-utils/step"
+
+	"github.com/smallstep/certificates/api"
+	"github.com/smallstep/cli-utils/errs"
+	"github.com/smallstep/cli-utils/step"
 	"go.step.sm/crypto/fingerprint"
+
+	"github.com/smallstep/cli/utils"
 )
 
 var (
@@ -29,13 +31,23 @@ If unset, default is EC.
 : <kty> is a case-sensitive string and must be one of:
 
     **EC**
-    :  Create an **elliptic curve** keypair
+    :  Create an **elliptic curve** key pair
 
     **OKP**
     :  Create an octet key pair (for **"Ed25519"** curve)
 
     **RSA**
-    :  Create an **RSA** keypair`,
+    :  Create an **RSA** key pair
+
+	**ML-DSA-44**
+	:  Create an ML-DSA key pair using the **ML-DSA-44** parameter set.
+
+	**ML-DSA-65**
+	:  Create an ML-DSA key pair using the **ML-DSA-65** parameter set.
+
+	**ML-DSA-87**
+	:  Create an ML-DSA key pair using the **ML-DSA-87** parameter set.
+	`,
 	}
 
 	// Size is the flag to set the key size.
@@ -467,8 +479,42 @@ flag exists so it can be configured in $STEPPATH/config/defaults.json.`,
 	}
 
 	KMSUri = cli.StringFlag{
-		Name:  "kms",
-		Usage: "The <uri> to configure a Cloud KMS or an HSM.",
+		Name: "kms",
+		Usage: `The <uri> to configure a (cloud) KMS or an HSM.
+<uri> is formatted as **kmstype:[key=value;...]?[key=value&...]**. The **;**-separated
+parameters identify the KMS, and **&**-separated parameters contain credentials and additional configuration for those credentials.
+
+: Supported KMS types:
+
+		**YubiKey PIV**
+		:  Use **yubikey:** URIs. Parameters: **serial**, **pin-value**, **pin-source**, **management-key**, **management-key-source**.
+
+		**PKCS #11**
+		:  Use **pkcs11:** URIs. Parameters: **module-path**, **token**, **id**, **object**, **pin-value**, **pin-source**.
+
+		**TPM 2.0**
+		:  Use **tpmkms:** URIs. Parameters: **name**, **device**, **attestation-ca-url**.
+
+		**Google Cloud KMS**
+		:  Use **cloudkms:** URIs. Parameters: **credentials-file**.
+
+		**AWS KMS**
+		:  Use **awskms:** URIs. Parameters: **region**, **profile**, **credentials-file**.
+
+		**Azure Key Vault**
+		:  Use **azurekms:** URIs. Parameters: **tenant-id**, **client-id**, **client-secret**, **client-certificate-file**.
+
+: Examples:
+
+'''
+yubikey:pin-value=123456
+pkcs11:module-path=/usr/lib/softhsm/libsofthsm2.so;token=smallstep?pin-value=pass
+tpmkms:name=my-key;device=/dev/tpmrm0
+awskms:region=us-east-1
+azurekms:client-id=fooo;client-secret=bar;tenant-id=9de53416-4431-4181-7a8b-23af3EXAMPLE
+'''
+
+    For more information, see https://smallstep.com/docs/step-ca/cryptographic-protection/.`,
 	}
 
 	AttestationURI = cli.StringFlag{
@@ -574,8 +620,8 @@ func ParseTemplateData(ctx *cli.Context) (json.RawMessage, error) {
 
 // GetTemplateData parses the set and set-file flags and returns a map to be
 // used in certificate templates.
-func GetTemplateData(ctx *cli.Context) (map[string]interface{}, error) {
-	data := make(map[string]interface{})
+func GetTemplateData(ctx *cli.Context) (map[string]any, error) {
+	data := make(map[string]any)
 	if path := ctx.String("set-file"); path != "" {
 		b, err := utils.ReadFile(path)
 		if err != nil {
@@ -588,14 +634,14 @@ func GetTemplateData(ctx *cli.Context) (map[string]interface{}, error) {
 
 	keyValues := ctx.StringSlice("set")
 	for _, s := range keyValues {
-		i := strings.Index(s, "=")
-		if i == -1 {
+		before, after, ok := strings.Cut(s, "=")
+		if !ok {
 			return nil, errs.InvalidFlagValue(ctx, "set", s, "")
 		}
-		key, value := s[:i], s[i+1:]
+		key, value := before, after
 
 		// If the value is not json, use the raw string.
-		var v interface{}
+		var v any
 		if err := json.Unmarshal([]byte(value), &v); err == nil {
 			data[key] = v
 		} else {
@@ -667,4 +713,28 @@ func parseCaURL(ctx *cli.Context, caURL string) (string, error) {
 	}
 
 	return fmt.Sprintf("%s://%s", u.Scheme, u.Host), nil
+}
+
+// FirstStringOf returns the value of the first defined flag from the input list.
+// If no defined flags, returns first flag with non-empty default value.
+func FirstStringOf(ctx *cli.Context, flags ...string) (string, string) {
+	// Return first defined flag.
+	for _, f := range flags {
+		if ctx.IsSet(f) {
+			return ctx.String(f), f
+		}
+	}
+	// Return first non-empty, default, flag value.
+	for _, f := range flags {
+		if val := ctx.String(f); val != "" {
+			return val, f
+		}
+	}
+
+	var name = "<unknown>"
+	if len(flags) > 0 {
+		name = flags[0]
+	}
+
+	return "", name
 }

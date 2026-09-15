@@ -9,10 +9,12 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
-	"github.com/smallstep/cli/flags"
 	"github.com/urfave/cli"
-	"go.step.sm/cli-utils/errs"
+
+	"github.com/smallstep/cli-utils/errs"
 	"go.step.sm/crypto/pemutil"
+
+	"github.com/smallstep/cli/flags"
 )
 
 const defaultPercentUsedThreshold = 66
@@ -58,7 +60,7 @@ $ step certificate needs-renewal ./certificate.crt --bundle
 '''
 
 Check if the leaf certificate provided by smallstep.com has passed 66 percent
-of its vlaidity period:
+of its validity period:
 '''
 $ step certificate needs-renewal https://smallstep.com
 '''
@@ -232,5 +234,11 @@ func isVerboseExit(needsRenewal, isVerbose bool) error {
 		}
 		return nil
 	}
-	return errs.NewExitError(errors.Errorf("certificate does not need renewal"), 1)
+
+	if isVerbose {
+		return errs.NewExitError(errors.Errorf("certificate does not need renewal"), 1)
+	}
+
+	// urfave/cli won't show any message
+	return cli.NewExitError("", 1)
 }

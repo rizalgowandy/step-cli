@@ -11,20 +11,25 @@ import (
 	"os"
 
 	"github.com/pkg/errors"
-	"github.com/smallstep/cli/flags"
-	"github.com/smallstep/cli/utils"
 	"github.com/urfave/cli"
-	"go.step.sm/cli-utils/errs"
-	"go.step.sm/cli-utils/ui"
+
+	"github.com/smallstep/cli-utils/command"
+	"github.com/smallstep/cli-utils/errs"
+	"github.com/smallstep/cli-utils/fileutil"
+	"github.com/smallstep/cli-utils/ui"
 	"go.step.sm/crypto/jose"
+	"go.step.sm/crypto/mldsa"
 	"go.step.sm/crypto/pemutil"
 	"golang.org/x/crypto/ssh"
+
+	"github.com/smallstep/cli/flags"
+	"github.com/smallstep/cli/utils"
 )
 
 func formatCommand() cli.Command {
 	return cli.Command{
 		Name:      "format",
-		Action:    cli.ActionFunc(formatAction),
+		Action:    command.ActionFunc(formatAction),
 		Usage:     `reformat a public or private key`,
 		UsageText: `**step crypto key format** <key-file> [**--out**=<file>]`,
 		Description: `**step crypto key format** prints or writes the key in
@@ -171,7 +176,7 @@ func formatAction(ctx *cli.Context) error {
 		toJWK      = ctx.Bool("jwk")
 		noPassword = ctx.Bool("no-password")
 		insecure   = ctx.Bool("insecure")
-		key        interface{}
+		key        any
 		ob         []byte
 	)
 
@@ -272,7 +277,7 @@ func formatAction(ctx *cli.Context) error {
 		if err != nil {
 			return errs.FileError(err, keyFile)
 		}
-		if err := utils.WriteFile(out, ob, info.Mode()); err != nil {
+		if err := fileutil.WriteFile(out, ob, info.Mode()); err != nil {
 			return errs.FileError(err, out)
 		}
 		ui.Printf("Your key has been saved in %s.\n", out)
@@ -284,7 +289,7 @@ func formatAction(ctx *cli.Context) error {
 func isSSHPublicKey(in []byte) bool {
 	switch {
 	case bytes.HasPrefix(in, []byte(ssh.KeyAlgoRSA)),
-		bytes.HasPrefix(in, []byte(ssh.KeyAlgoDSA)),
+		bytes.HasPrefix(in, []byte(ssh.InsecureKeyAlgoDSA)), //nolint:staticcheck // compatibility with older tooling
 		bytes.HasPrefix(in, []byte(ssh.KeyAlgoECDSA256)),
 		bytes.HasPrefix(in, []byte(ssh.KeyAlgoECDSA384)),
 		bytes.HasPrefix(in, []byte(ssh.KeyAlgoECDSA521)),
@@ -305,7 +310,7 @@ func isJWK(in []byte) bool {
 	return false
 }
 
-func parseJWK(ctx *cli.Context, b []byte) (interface{}, error) {
+func parseJWK(ctx *cli.Context, b []byte) (any, error) {
 	// Decrypt key if encrypted.
 	if _, err := jose.ParseEncrypted(string(b)); err == nil {
 		opts := []jose.Option{
@@ -334,15 +339,15 @@ func parseJWK(ctx *cli.Context, b []byte) (interface{}, error) {
 	return jwk.Key, nil
 }
 
-func convertToPEM(ctx *cli.Context, key interface{}) (b []byte, err error) {
+func convertToPEM(ctx *cli.Context, key any) (b []byte, err error) {
 	opts := []pemutil.Options{
 		pemutil.WithPKCS8(ctx.Bool("pkcs8")),
 	}
 
 	if !ctx.Bool("no-password") {
 		switch key.(type) {
-		case *ecdsa.PublicKey, *rsa.PublicKey, ed25519.PublicKey:
-		case *rsa.PrivateKey, *ecdsa.PrivateKey, ed25519.PrivateKey:
+		case *ecdsa.PublicKey, *rsa.PublicKey, ed25519.PublicKey, *mldsa.PublicKey:
+		case *rsa.PrivateKey, *ecdsa.PrivateKey, ed25519.PrivateKey, *mldsa.PrivateKey:
 			if passFile := ctx.String("password-file"); passFile != "" {
 				opts = append(opts, pemutil.WithPasswordFile(passFile))
 			} else {
@@ -362,7 +367,7 @@ func convertToPEM(ctx *cli.Context, key interface{}) (b []byte, err error) {
 	return pem.EncodeToMemory(block), nil
 }
 
-func convertToDER(ctx *cli.Context, key interface{}) (b []byte, err error) {
+func convertToDER(ctx *cli.Context, key any) (b []byte, err error) {
 	switch k := key.(type) {
 	case *rsa.PrivateKey:
 		if ctx.Bool("pkcs8") {
@@ -376,9 +381,9 @@ func convertToDER(ctx *cli.Context, key interface{}) (b []byte, err error) {
 		} else {
 			b, err = x509.MarshalECPrivateKey(k)
 		}
-	case ed25519.PrivateKey: // always PKCS#8
+	case ed25519.PrivateKey, *mldsa.PrivateKey: // always PKCS#8
 		b, err = x509.MarshalPKCS8PrivateKey(key)
-	case *ecdsa.PublicKey, *rsa.PublicKey, ed25519.PublicKey: // always PKIX
+	case *ecdsa.PublicKey, *rsa.PublicKey, ed25519.PublicKey, *mldsa.PublicKey: // always PKIX
 		b, err = x509.MarshalPKIXPublicKey(key)
 	default:
 		return nil, errors.Errorf("unsupported key type %T", key)
@@ -386,7 +391,7 @@ func convertToDER(ctx *cli.Context, key interface{}) (b []byte, err error) {
 	return
 }
 
-func convertToSSH(ctx *cli.Context, key interface{}) ([]byte, error) {
+func convertToSSH(ctx *cli.Context, key any) ([]byte, error) {
 	switch key.(type) {
 	case *ecdsa.PublicKey, *rsa.PublicKey, ed25519.PublicKey:
 		k, err := ssh.NewPublicKey(key)
@@ -417,7 +422,7 @@ func convertToSSH(ctx *cli.Context, key interface{}) ([]byte, error) {
 	}
 }
 
-func convertToJWK(ctx *cli.Context, key interface{}) ([]byte, error) {
+func convertToJWK(ctx *cli.Context, key any) ([]byte, error) {
 	b, err := json.Marshal(&jose.JSONWebKey{Key: key})
 	if err != nil {
 		return nil, err

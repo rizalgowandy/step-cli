@@ -2,20 +2,23 @@ package sshutil
 
 import (
 	"crypto"
-	"crypto/dsa" // Maintain support for deprecated algorithms.
+	"crypto/dsa" //nolint:staticcheck // support deprecated algorithms.
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rsa"
 	"encoding/binary"
+	"fmt"
 	"math/big"
 
 	"github.com/pkg/errors"
 	"golang.org/x/crypto/ssh"
+
+	"github.com/smallstep/cli/internal/cast"
 )
 
 // NewCertSigner creates a new signer with the given certificate and private key.
-func NewCertSigner(cert *ssh.Certificate, priv interface{}) (ssh.Signer, error) {
+func NewCertSigner(cert *ssh.Certificate, priv any) (ssh.Signer, error) {
 	signer, err := ssh.NewSignerFromKey(priv)
 	if err != nil {
 		return nil, errors.Wrap(err, "error creating signer")
@@ -54,7 +57,7 @@ func PublicKey(key ssh.PublicKey) (crypto.PublicKey, error) {
 		return parseECDSA(in)
 	case ssh.KeyAlgoED25519, ssh.KeyAlgoSKED25519:
 		return parseED25519(in)
-	case ssh.KeyAlgoDSA:
+	case ssh.InsecureKeyAlgoDSA: //nolint:staticcheck // compatibility with older tooling
 		return parseDSA(in)
 	default:
 		return nil, errors.Errorf("public key %s is not supported", key.Type())
@@ -94,7 +97,7 @@ func publicKeyTypeAndSize(key ssh.PublicKey) (string, int, error) {
 			return "", 0, err
 		}
 		size = 8 * k.Size()
-	case ssh.KeyAlgoDSA:
+	case ssh.InsecureKeyAlgoDSA: //nolint:staticcheck // compatibility with older tooling
 		typ = "DSA"
 		_, in, ok := parseString(key.Marshal())
 		if !ok {
@@ -122,7 +125,7 @@ func parseString(in []byte) (out, rest []byte, ok bool) {
 	}
 	length := binary.BigEndian.Uint32(in)
 	in = in[4:]
-	if uint32(len(in)) < length {
+	if cast.Uint32(len(in)) < length {
 		return
 	}
 	out = in[:length]
@@ -177,33 +180,34 @@ func parseRSA(in []byte) (*rsa.PublicKey, error) {
 }
 
 // parseECDSA parses an ECDSA key according to RFC 5656, section 3.1.
+//
+// This function is based on the one in golang.org/x/crypto/ssh.
 func parseECDSA(in []byte) (*ecdsa.PublicKey, error) {
 	var w struct {
-		Curve    string
-		KeyBytes []byte
-		Rest     []byte `ssh:"rest"`
+		Name  string
+		Curve string
+		Key   []byte
 	}
 
 	if err := ssh.Unmarshal(in, &w); err != nil {
 		return nil, errors.Wrap(err, "error unmarshaling public key")
 	}
 
-	key := new(ecdsa.PublicKey)
-
+	var curve elliptic.Curve
 	switch w.Curve {
 	case "nistp256":
-		key.Curve = elliptic.P256()
+		curve = elliptic.P256()
 	case "nistp384":
-		key.Curve = elliptic.P384()
+		curve = elliptic.P384()
 	case "nistp521":
-		key.Curve = elliptic.P521()
+		curve = elliptic.P521()
 	default:
 		return nil, errors.Errorf("unsupported curve %s", w.Curve)
 	}
 
-	key.X, key.Y = elliptic.Unmarshal(key.Curve, w.KeyBytes)
-	if key.X == nil || key.Y == nil {
-		return nil, errors.New("invalid curve point")
+	key, err := ecdsa.ParseUncompressedPublicKey(curve, w.Key)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create key: %w", err)
 	}
 
 	return key, nil

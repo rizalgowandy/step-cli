@@ -9,16 +9,19 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"github.com/urfave/cli"
+
 	"github.com/smallstep/certificates/api"
 	"github.com/smallstep/certificates/authority/provisioner"
 	"github.com/smallstep/certificates/ca"
 	"github.com/smallstep/certificates/pki"
-	"github.com/smallstep/cli/flags"
-	"github.com/urfave/cli"
-	"go.step.sm/cli-utils/errs"
-	"go.step.sm/cli-utils/ui"
+	"github.com/smallstep/cli-utils/errs"
+	"github.com/smallstep/cli-utils/ui"
+
 	"go.step.sm/crypto/keyutil"
 	"go.step.sm/crypto/pemutil"
+
+	"github.com/smallstep/cli/flags"
 )
 
 // CaClient is the interface implemented by a client used to sign, renew, revoke
@@ -113,7 +116,7 @@ func NewAdminClient(ctx *cli.Context, opts ...ca.ClientOption) (*ca.AdminClient,
 		adminCertFile = ctx.String("admin-cert")
 		adminKeyFile  = ctx.String("admin-key")
 		adminCert     []*x509.Certificate
-		adminKey      interface{}
+		adminKey      any
 	)
 	if adminCertFile != "" || adminKeyFile != "" {
 		if adminCertFile == "" {

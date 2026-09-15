@@ -10,15 +10,18 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
-	"github.com/smallstep/certificates/pki"
-	"github.com/smallstep/cli/flags"
-	"github.com/smallstep/cli/utils"
 	"github.com/urfave/cli"
-	"go.step.sm/cli-utils/command"
-	"go.step.sm/cli-utils/errs"
-	"go.step.sm/cli-utils/ui"
+
+	"github.com/smallstep/certificates/pki"
+	"github.com/smallstep/cli-utils/command"
+	"github.com/smallstep/cli-utils/errs"
+	"github.com/smallstep/cli-utils/ui"
 	"go.step.sm/crypto/keyutil"
 	"go.step.sm/crypto/pemutil"
+
+	"github.com/smallstep/cli/flags"
+	"github.com/smallstep/cli/internal/cryptoutil"
+	"github.com/smallstep/cli/utils"
 )
 
 func rekeyCertificateCommand() cli.Command {
@@ -30,7 +33,7 @@ func rekeyCertificateCommand() cli.Command {
 [**--out-cert**=<file>] [**--out-key**=<file>] [**--private-key**=<file>]
 [**--ca-url**=<uri>] [**--root**=<file>] [**--password-file**=<file>]
 [**--expires-in**=<duration>] [**--force**] [**--exec**=<string>] [**--daemon**]
-[**--kty**=<type>] [**--curve**=<curve>] [**--size**=<size>]
+[**--kms**=<uri>] [**--kty**=<type>] [**--curve**=<curve>] [**--size**=<size>]
 [**--expires-in**=<duration>] [**--pid**=<int>] [**--pid-file**=<file>]
 [**--signal**=<int>] [**--exec**=<string>] [**--rekey-period**=<duration>]`,
 		Description: `
@@ -49,6 +52,10 @@ fixed period can be set with the **--rekey-period** flag.
 
 The **--daemon** flag can be combined with **--pid**, **--signal**, or **--exec**
 to provide certificate reloads on your services.
+
+The **--kms** flag rekeys an existing key in a KMS with another key from the same
+KMS. It does not support generating new keys, using the **--daemon** flag, or
+rekeying across different KMS instances.
 
 ## POSITIONAL ARGUMENTS
 
@@ -74,6 +81,24 @@ Rekey a certificate forcing the overwrite of the previous certificate and key
 (overwrites the existing files without prompting):
 '''
 $ step ca rekey --force internal.crt internal.key
+'''
+
+Rekey a certificate using a KMS, with another from the same KMS:
+'''
+$ step ca rekey --private-key 'yubikey:slot-id=9a?pin-value=123456' \
+  yubikey.crt 'yubikey:slot-id=82?pin-value=123456'
+'''
+
+Rekey a certificate using a KMS with the <--kms> flag:
+'''
+$ step ca rekey \
+  --kms 'pkcs11:module-path=/usr/local/lib/softhsm/libsofthsm2.so;token=smallstep?pin-value=password' \
+  --private-key 'pkcs11:id=4002' pkcs11.crt 'pkcs11:id=4001'
+'''
+
+'''
+$ step ca rekey --key yubikey:pin-value=123456 --private-key yubikey:slot-id=9a \
+  yubikey.crt 'yubikey:slot-id=82
 '''
 
 Rekey a certificate providing the <--ca-url> and <--root> flags:
@@ -192,6 +217,7 @@ Requires the **--daemon** flag. The <duration> is a sequence of decimal numbers,
 each with optional fraction and a unit suffix, such as "300ms", "1.5h", or "2h45m".
 Valid time units are "ns", "us" (or "µs"), "ms", "s", "m", "h".`,
 			},
+			flags.KMSUri,
 			flags.KTY,
 			flags.Curve,
 			flags.Size,
@@ -218,6 +244,21 @@ func rekeyCertificateAction(ctx *cli.Context) error {
 	isDaemon := ctx.Bool("daemon")
 	execCmd := ctx.String("exec")
 	givenPrivate := ctx.String("private-key")
+	kmsURI := ctx.String("kms")
+
+	// For now, if the --kms flag is given, do not allow to generate a new key
+	// and write it on disk. We can't use the daemon mode because we
+	// cannot generate new keys.
+	if kmsURI != "" || cryptoutil.IsKMS(keyFile) {
+		switch {
+		case givenPrivate == "":
+			return errs.RequiredWithFlag(ctx, "kms", "private-key")
+		case ctx.IsSet("out-key"):
+			return errs.IncompatibleFlagWithFlag(ctx, "kms", "out-key")
+		case isDaemon:
+			return errs.IncompatibleFlagWithFlag(ctx, "kms", "daemon")
+		}
+	}
 
 	outCert := ctx.String("out-cert")
 	if outCert == "" {
@@ -284,7 +325,7 @@ func rekeyCertificateAction(ctx *cli.Context) error {
 		return errs.InvalidFlagValue(ctx, "signal", strconv.Itoa(signum), "")
 	}
 
-	cert, err := tlsLoadX509KeyPair(certFile, keyFile, passFile)
+	cert, err := tlsLoadX509KeyPair(kmsURI, certFile, keyFile, passFile)
 	if err != nil {
 		return err
 	}
@@ -322,23 +363,27 @@ func rekeyCertificateAction(ctx *cli.Context) error {
 		}
 	}
 
-	var priv crypto.PrivateKey
+	var signer crypto.Signer
 	if givenPrivate == "" {
 		kty, crv, size, err := utils.GetKeyDetailsFromCLI(ctx, false, "kty", "curve", "size")
 		if err != nil {
 			return err
 		}
-		priv, err = keyutil.GenerateKey(kty, crv, size)
+		signer, err = keyutil.GenerateSigner(kty, crv, size)
 		if err != nil {
 			return err
 		}
 	} else {
-		priv, err = pemutil.Read(givenPrivate)
+		opts := []pemutil.Options{pemutil.WithFilename(givenPrivate)}
+		if passFile != "" {
+			opts = append(opts, pemutil.WithPasswordFile(passFile))
+		}
+		signer, err = cryptoutil.CreateSigner(kmsURI, givenPrivate, opts...)
 		if err != nil {
 			return err
 		}
 	}
-	if _, err := renewer.Rekey(priv, outCert, outKey, ctx.IsSet("out-key") || givenPrivate == ""); err != nil {
+	if _, err := renewer.Rekey(signer, outCert, outKey, ctx.IsSet("out-key") || givenPrivate == ""); err != nil {
 		return err
 	}
 

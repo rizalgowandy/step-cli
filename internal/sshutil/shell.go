@@ -9,10 +9,11 @@ import (
 	"strings"
 
 	"github.com/pkg/errors"
-	"go.step.sm/cli-utils/step"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/knownhosts"
 	"golang.org/x/term"
+
+	"github.com/smallstep/cli-utils/step"
 )
 
 // ProxyCommand replaces %%, %h, %p, and %r in the given command.
@@ -49,7 +50,7 @@ func WithSigner(signer ssh.Signer) ShellOption {
 
 // WithCertificate adds a signer with the given certificate as an
 // ssh.AuthMethod.
-func WithCertificate(cert *ssh.Certificate, priv interface{}) ShellOption {
+func WithCertificate(cert *ssh.Certificate, priv any) ShellOption {
 	return func(s *Shell) error {
 		signer, err := NewCertSigner(cert, priv)
 		if err != nil {
@@ -178,7 +179,7 @@ func (s *Shell) RemoteShell() error {
 	defer session.Close()
 
 	var fallback bool
-	if fd := int(os.Stdin.Fd()); term.IsTerminal(fd) {
+	if fd := int(os.Stdin.Fd()); term.IsTerminal(fd) { // #nosec G115 -- uintptr comes from file descriptor
 		// Put terminal in raw mode
 		if originalState, err := term.MakeRaw(fd); err != nil {
 			fallback = true

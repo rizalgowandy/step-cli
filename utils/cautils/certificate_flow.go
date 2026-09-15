@@ -7,6 +7,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
+	"maps"
 	"net"
 	"net/url"
 	"os"
@@ -14,20 +15,23 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"github.com/urfave/cli"
+	"golang.org/x/crypto/ssh"
+
 	"github.com/smallstep/certificates/api"
 	"github.com/smallstep/certificates/authority/provisioner"
 	"github.com/smallstep/certificates/ca"
 	"github.com/smallstep/certificates/pki"
-	"github.com/smallstep/cli/flags"
-	"github.com/smallstep/cli/token"
-	"github.com/smallstep/cli/utils"
-	"github.com/urfave/cli"
-	"go.step.sm/cli-utils/errs"
-	"go.step.sm/cli-utils/ui"
+	"github.com/smallstep/cli-utils/errs"
+	"github.com/smallstep/cli-utils/fileutil"
+	"github.com/smallstep/cli-utils/ui"
 	"go.step.sm/crypto/keyutil"
 	"go.step.sm/crypto/pemutil"
 	"go.step.sm/crypto/x509util"
-	"golang.org/x/crypto/ssh"
+
+	"github.com/smallstep/cli/flags"
+	"github.com/smallstep/cli/token"
+	"github.com/smallstep/cli/utils"
 )
 
 // CertificateFlow manages the flow to retrieve a new certificate.
@@ -41,6 +45,7 @@ type flowContext struct {
 	SSHPublicKey            ssh.PublicKey
 	CertificateRequest      *x509.CertificateRequest
 	ConfirmationFingerprint string
+	CustomAttributes        map[string]any
 }
 
 // sharedContext is used to share information between commands.
@@ -83,6 +88,16 @@ func WithCertificateRequest(cr *x509.CertificateRequest) Option {
 func WithConfirmationFingerprint(fp string) Option {
 	return newFuncFlowOption(func(fo *flowContext) {
 		fo.ConfirmationFingerprint = fp
+	})
+}
+
+// WithCustomAttributes adds custom attributes to be set in the "user" claim.
+func WithCustomAttributes(v map[string]any) Option {
+	return newFuncFlowOption(func(fo *flowContext) {
+		if fo.CustomAttributes == nil {
+			fo.CustomAttributes = make(map[string]any)
+		}
+		maps.Copy(fo.CustomAttributes, v)
 	})
 }
 
@@ -273,7 +288,7 @@ func (f *CertificateFlow) Sign(ctx *cli.Context, tok string, csr api.Certificate
 		}
 		data = append(data, pem.EncodeToMemory(pemblk)...)
 	}
-	return utils.WriteFile(crtFile, data, 0600)
+	return fileutil.WriteFile(crtFile, data, 0o600)
 }
 
 // CreateSignRequest is a helper function that given an x509 OTT returns a

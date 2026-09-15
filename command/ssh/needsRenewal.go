@@ -8,11 +8,13 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"github.com/urfave/cli"
+	"golang.org/x/crypto/ssh"
+
+	"github.com/smallstep/cli-utils/errs"
+
 	"github.com/smallstep/cli/internal/sshutil"
 	"github.com/smallstep/cli/utils"
-	"github.com/urfave/cli"
-	"go.step.sm/cli-utils/errs"
-	"golang.org/x/crypto/ssh"
 )
 
 const defaultPercentUsedThreshold = 66
@@ -170,5 +172,11 @@ func isVerboseExit(needsRenewal, isVerbose bool) error {
 		}
 		return nil
 	}
-	return errs.NewExitError(errors.Errorf("certificate does not need renewal"), 1)
+
+	if isVerbose {
+		return errs.NewExitError(errors.Errorf("certificate does not need renewal"), 1)
+	}
+
+	// urfave/cli won't show any message
+	return cli.NewExitError("", 1)
 }

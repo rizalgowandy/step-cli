@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/smallstep/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/urfave/cli"
 	"go.step.sm/crypto/fingerprint"
 )
@@ -98,10 +99,10 @@ func Test_parseCaURL(t *testing.T) {
 		{name: "ok/ipv6-bracketed-no-port", caURL: "https://[::1]", ret: "https://[::1]"},
 		{name: "ok/ipv6-bracketed-no-scheme", caURL: "[::1]:8080", ret: "https://[::1]:8080"},
 		{name: "ok/ipv6-bracketed-no-port-no-scheme", caURL: "[::1]", ret: "https://[::1]"},
-		{name: "ok/ipv6-non-bracketed", caURL: "https://::1:8080", ret: "https://[::1]:8080"},
-		{name: "ok/ipv6-non-bracketed-no-port", caURL: "https://::1", ret: "https://[::1]"},
-		{name: "ok/ipv6-non-bracketed-no-scheme", caURL: "::1:8080", ret: "https://[::1]:8080"},
-		{name: "ok/ipv6-non-bracketed-no-port-no-scheme", caURL: "::1", ret: "https://[::1]"},
+		{name: "fail/ipv6-non-bracketed", caURL: "https://::1:8080", ret: "", err: errors.New("invalid value 'https://::1:8080' for flag '--ca-url'; invalid URL")},
+		{name: "fail/ipv6-non-bracketed-no-port", caURL: "https://::1", ret: "", err: errors.New("invalid value 'https://::1' for flag '--ca-url'; invalid URL")},
+		{name: "fail/ipv6-non-bracketed-no-scheme", caURL: "::1:8080", ret: "", err: errors.New("invalid value 'https://::1:8080' for flag '--ca-url'; invalid URL")},
+		{name: "fail/ipv6-non-bracketed-no-port-no-scheme", caURL: "::1", ret: "", err: errors.New("invalid value 'https://::1' for flag '--ca-url'; invalid URL")},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -227,6 +228,85 @@ func TestParseFingerprintFormat(t *testing.T) {
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("ParseFingerprintFormat() = %v, want %v", got, tt.want)
 			}
+		})
+	}
+}
+
+func TestFirstStringOf(t *testing.T) {
+	getAppSet := func() (*cli.App, *flag.FlagSet) {
+		app := &cli.App{}
+		set := flag.NewFlagSet("contrive", 0)
+		return app, set
+	}
+	tests := []struct {
+		name       string
+		getContext func() *cli.Context
+		inputs     []string
+		want       string
+		wantName   string
+	}{
+		{
+			name: "no-flags-empty",
+			getContext: func() *cli.Context {
+				app, set := getAppSet()
+				//_ = set.String("ca-url", "", "")
+				return cli.NewContext(app, set, nil)
+			},
+			inputs:   []string{"foo", "bar"},
+			want:     "",
+			wantName: "foo",
+		},
+		{
+			name: "return-first-set-flag",
+			getContext: func() *cli.Context {
+				app, set := getAppSet()
+				_ = set.String("foo", "", "")
+				_ = set.String("bar", "", "")
+				_ = set.String("baz", "", "")
+				ctx := cli.NewContext(app, set, nil)
+				ctx.Set("bar", "test1")
+				ctx.Set("baz", "test2")
+				return ctx
+			},
+			inputs:   []string{"foo", "bar", "baz"},
+			want:     "test1",
+			wantName: "bar",
+		},
+		{
+			name: "return-first-default-flag",
+			getContext: func() *cli.Context {
+				app, set := getAppSet()
+				_ = set.String("foo", "", "")
+				_ = set.String("bar", "", "")
+				_ = set.String("baz", "test1", "")
+				ctx := cli.NewContext(app, set, nil)
+				return ctx
+			},
+			inputs:   []string{"foo", "bar", "baz"},
+			want:     "test1",
+			wantName: "baz",
+		},
+		{
+			name: "all-empty",
+			getContext: func() *cli.Context {
+				app, set := getAppSet()
+				_ = set.String("foo", "", "")
+				_ = set.String("bar", "", "")
+				_ = set.String("baz", "", "")
+				ctx := cli.NewContext(app, set, nil)
+				return ctx
+			},
+			inputs:   []string{"foo", "bar", "baz"},
+			want:     "",
+			wantName: "foo",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := tt.getContext()
+			val, name := FirstStringOf(ctx, tt.inputs...)
+			require.Equal(t, tt.want, val)
+			require.Equal(t, tt.wantName, name)
 		})
 	}
 }

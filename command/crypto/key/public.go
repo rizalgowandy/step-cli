@@ -4,14 +4,17 @@ import (
 	"encoding/pem"
 	"os"
 
-	"github.com/smallstep/cli/flags"
-	"github.com/smallstep/cli/utils"
 	"github.com/urfave/cli"
-	"go.step.sm/cli-utils/command"
-	"go.step.sm/cli-utils/errs"
-	"go.step.sm/cli-utils/ui"
+
+	"github.com/smallstep/cli-utils/command"
+	"github.com/smallstep/cli-utils/errs"
+	"github.com/smallstep/cli-utils/fileutil"
+	"github.com/smallstep/cli-utils/ui"
 	"go.step.sm/crypto/keyutil"
 	"go.step.sm/crypto/pemutil"
+
+	"github.com/smallstep/cli/flags"
+	"github.com/smallstep/cli/utils"
 )
 
 func publicCommand() cli.Command {
@@ -71,7 +74,7 @@ func publicAction(ctx *cli.Context) error {
 		return errs.TooManyArguments(ctx)
 	}
 
-	var b, err = utils.ReadFile(name)
+	b, err := utils.ReadFile(name)
 	if err != nil {
 		return errs.FileError(err, name)
 	}
@@ -96,7 +99,7 @@ func publicAction(ctx *cli.Context) error {
 	}
 
 	if out := ctx.String("out"); out != "" {
-		if err := utils.WriteFile(out, pem.EncodeToMemory(block), 0600); err != nil {
+		if err := fileutil.WriteFile(out, pem.EncodeToMemory(block), 0o600); err != nil {
 			return err
 		}
 		ui.Printf("The public key has been saved in %s.\n", out)

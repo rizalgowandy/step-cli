@@ -1,5 +1,4 @@
 //go:build aix || darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris
-// +build aix darwin dragonfly freebsd linux netbsd openbsd solaris
 
 package sshutil
 
@@ -15,7 +14,7 @@ import (
 // to the agent.
 func dialAgent() (*Agent, error) {
 	socket := os.Getenv("SSH_AUTH_SOCK")
-	conn, err := net.Dial("unix", socket)
+	conn, err := net.Dial("unix", socket) // #nosec G704 -- SSH_AUTH_SOCK points to a local Unix domain socket path
 	if err != nil {
 		return nil, errors.Wrap(err, "error connecting with ssh-agent")
 	}

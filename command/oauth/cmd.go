@@ -20,14 +20,16 @@ import (
 	"time"
 
 	"github.com/pkg/errors"
+	"github.com/urfave/cli"
+
+	"github.com/smallstep/cli-utils/command"
+	"github.com/smallstep/cli-utils/errs"
+	"go.step.sm/crypto/jose"
+	"go.step.sm/crypto/randutil"
+
 	"github.com/smallstep/cli/exec"
 	"github.com/smallstep/cli/flags"
 	"github.com/smallstep/cli/utils"
-	"github.com/urfave/cli"
-	"go.step.sm/cli-utils/command"
-	"go.step.sm/cli-utils/errs"
-	"go.step.sm/crypto/jose"
-	"go.step.sm/crypto/randutil"
 )
 
 // These are the OAuth2.0 client IDs from the Step CLI. This application is
@@ -64,9 +66,9 @@ const (
 )
 
 type token struct {
-	AccessToken  string `json:"access_token"`
+	AccessToken  string `json:"access_token"` // #nosec G117 -- JSON property
 	IDToken      string `json:"id_token"`
-	RefreshToken string `json:"refresh_token"`
+	RefreshToken string `json:"refresh_token"` // #nosec G117 -- JSON property
 	ExpiresIn    int    `json:"expires_in"`
 	TokenType    string `json:"token_type"`
 	Err          string `json:"error,omitempty"`
@@ -435,13 +437,13 @@ func oauthCmd(c *cli.Context) error {
 		if err != nil {
 			return errors.Wrapf(err, "error reading account from %s", filename)
 		}
-		account := make(map[string]interface{})
+		account := make(map[string]any)
 		if err = json.Unmarshal(b, &account); err != nil {
 			return errors.Wrapf(err, "error reading %s: unsupported format", filename)
 		}
 
 		if _, ok := account["installed"]; ok {
-			details := account["installed"].(map[string]interface{})
+			details := account["installed"].(map[string]any)
 			authzEp = details["auth_uri"].(string)
 			tokenEp = details["token_uri"].(string)
 			clientID = details["client_id"].(string)
@@ -524,7 +526,7 @@ func oauthCmd(c *cli.Context) error {
 				fmt.Println(tok.AccessToken)
 			}
 		} else {
-			b, err := json.MarshalIndent(tok, "", "  ")
+			b, err := json.MarshalIndent(tok, "", "  ") // #nosec G117 --  printing the token details intentionally
 			if err != nil {
 				return errors.Wrapf(err, "error marshaling token data")
 			}
@@ -569,13 +571,13 @@ type endpoint struct {
 }
 
 var knownProviders = map[string]endpoint{
-	"google": {
+	"google": { // #nosec G101 -- no credentials; just well-known configuration values
 		authorization:       "https://accounts.google.com/o/oauth2/v2/auth",
 		deviceAuthorization: "https://oauth2.googleapis.com/device/code",
 		token:               "https://www.googleapis.com/oauth2/v4/token",
 		userInfo:            "https://www.googleapis.com/oauth2/v3/userinfo",
 	},
-	"github": {
+	"github": { // #nosec G101 -- no credentials; just well-known configuration values
 		authorization:       "https://github.com/login/oauth/authorize",
 		deviceAuthorization: "https://github.com/login/device/code",
 		token:               "https://github.com/login/oauth/access_token",
@@ -679,7 +681,7 @@ func newOauth(provider, clientID, clientSecret, authzEp, deviceAuthzEp, tokenEp,
 	}, nil
 }
 
-func disco(provider string) (map[string]interface{}, error) {
+func disco(provider string) (map[string]any, error) {
 	u, err := url.Parse(provider)
 	if err != nil {
 		return nil, err
@@ -699,7 +701,7 @@ func disco(provider string) (map[string]interface{}, error) {
 	if err != nil {
 		return nil, errors.Wrapf(err, "error retrieving %s", u.String())
 	}
-	details := make(map[string]interface{})
+	details := make(map[string]any)
 	if err = json.Unmarshal(b, &details); err != nil {
 		return nil, errors.Wrapf(err, "error reading %s: unsupported format", u.String())
 	}
@@ -710,7 +712,7 @@ func disco(provider string) (map[string]interface{}, error) {
 // application/json", without this header GitHub will use
 // application/x-www-form-urlencoded.
 func postForm(rawurl string, data url.Values) (*http.Response, error) {
-	req, err := http.NewRequest("POST", rawurl, strings.NewReader(data.Encode()))
+	req, err := http.NewRequest("POST", rawurl, strings.NewReader(data.Encode())) // #nosec G704 -- request intentionally relies on user data
 	if err != nil {
 		return nil, fmt.Errorf("create POST %s request failed: %w", rawurl, err)
 	}
@@ -720,7 +722,7 @@ func postForm(rawurl string, data url.Values) (*http.Response, error) {
 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
-	return http.DefaultClient.Do(req)
+	return http.DefaultClient.Do(req) // #nosec G704 -- request intentionally relies on user configuration
 }
 
 // NewServer creates http server
@@ -782,18 +784,22 @@ func (o *oauth) DoLoopbackAuthorization() (*token, error) {
 		return nil, err
 	}
 
-	if err := exec.OpenInBrowser(authURL, o.browser); err != nil {
-		fmt.Fprintln(os.Stderr, "Cannot open a web browser on your platform.")
-		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, "Open a local web browser and visit:")
-		fmt.Fprintln(os.Stderr)
+	if skipBrowser := os.Getenv("STEP_OPEN_BROWSER") == "0"; skipBrowser {
 		fmt.Fprintln(os.Stderr, authURL)
-		fmt.Fprintln(os.Stderr)
 	} else {
-		fmt.Fprintln(os.Stderr, "Your default web browser has been opened to visit:")
-		fmt.Fprintln(os.Stderr)
-		fmt.Fprintln(os.Stderr, authURL)
-		fmt.Fprintln(os.Stderr)
+		if err := exec.OpenInBrowser(authURL, o.browser); err != nil {
+			fmt.Fprintln(os.Stderr, "Cannot open a web browser on your platform.")
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintln(os.Stderr, "Open a local web browser and visit:")
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintln(os.Stderr, authURL)
+			fmt.Fprintln(os.Stderr)
+		} else {
+			fmt.Fprintln(os.Stderr, "Your default web browser has been opened to visit:")
+			fmt.Fprintln(os.Stderr)
+			fmt.Fprintln(os.Stderr, authURL)
+			fmt.Fprintln(os.Stderr)
+		}
 	}
 
 	// Wait for response and return the token
@@ -885,7 +891,12 @@ func (o *oauth) DoDeviceAuthorization() (*token, error) {
 		return nil, errors.Wrap(err, "failure decoding device authz response to JSON")
 	}
 
+	shouldPrintCode := true
 	switch {
+	case idr.VerificationURIComplete != "":
+		// Prefer VerificationURIComplete if present for user convenience
+		idr.VerificationURI = idr.VerificationURIComplete
+		shouldPrintCode = false
 	case idr.VerificationURI != "":
 		// do nothing
 	case idr.VerificationURL != "":
@@ -900,8 +911,12 @@ func (o *oauth) DoDeviceAuthorization() (*token, error) {
 		idr.Interval = defaultDeviceAuthzInterval
 	}
 
-	fmt.Fprintf(os.Stderr, "Visit %s and enter the code:\n", idr.VerificationURI)
-	fmt.Fprintln(os.Stderr, idr.UserCode)
+	if shouldPrintCode {
+		fmt.Fprintf(os.Stderr, "Visit %s and enter the code:\n", idr.VerificationURI)
+		fmt.Fprintln(os.Stderr, idr.UserCode)
+	} else {
+		fmt.Fprintf(os.Stderr, "Visit %s:\n", idr.VerificationURI)
+	}
 
 	// Poll the Token endpoint until the user completes the flow.
 	data = url.Values{}
@@ -978,7 +993,7 @@ func (o *oauth) DoTwoLeggedAuthorization(issuer string) (*token, error) {
 
 	// Add claims
 	now := int(time.Now().Unix())
-	c := map[string]interface{}{
+	c := map[string]any{
 		"aud":   o.tokenEndpoint,
 		"nbf":   now,
 		"iat":   now,
@@ -1041,7 +1056,7 @@ func (o *oauth) DoJWTAuthorization(issuer, aud string) (*token, error) {
 
 	// Add claims
 	now := int(time.Now().Unix())
-	c := map[string]interface{}{
+	c := map[string]any{
 		"aud": aud,
 		"nbf": now,
 		"iat": now,
@@ -1100,7 +1115,7 @@ func (o *oauth) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 
 	code, state := q.Get("code"), q.Get("state")
 	if code == "" || state == "" {
-		fmt.Fprintf(os.Stderr, "Invalid request received: http://%s%s\n", req.RemoteAddr, req.URL.String())
+		fmt.Fprintf(os.Stderr, "Invalid request received: http://%s%s\n", req.RemoteAddr, req.URL.String()) // #nosec G705 -- terminal output
 		fmt.Fprintf(os.Stderr, "You may have an app or browser plugin that needs to be turned off\n")
 		http.Error(w, "400 bad request", http.StatusBadRequest)
 		return
@@ -1303,7 +1318,7 @@ func (o *oauth) badRequest(w http.ResponseWriter, msg string) {
 	w.Write([]byte(`</div>`))
 	w.Write([]byte(`<p style='font-size: 20px;'>`))
 	w.Write([]byte(`<strong style='font-size: 28px; color: red;'>Failure</strong><br />`))
-	w.Write([]byte(msg))
+	w.Write([]byte(msg)) // #nosec G705 -- message is either a string literal, or comes from (trusted) IdP
 	w.Write([]byte(`</p></body></html>`))
 	o.errCh <- errors.New(msg)
 }

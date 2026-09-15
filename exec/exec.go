@@ -79,7 +79,7 @@ func RunWithPid(pidFile, name string, arg ...string) {
 	cmd, exitCh, err := run(name, arg...)
 	if err != nil {
 		f.Close()
-		os.Remove(f.Name())
+		_ = os.Remove(f.Name()) // #nosec G703 -- file does not depend on user configuration
 		errorAndExit(name, err)
 	}
 
@@ -94,7 +94,7 @@ func RunWithPid(pidFile, name string, arg ...string) {
 	}
 
 	// clean, exit and wait until os.Exit
-	os.Remove(f.Name())
+	_ = os.Remove(f.Name()) // #nosec G703 -- file does not depend on user configuration
 	exitCh <- getExitStatus(cmd)
 	exitCh <- 0
 }
@@ -115,6 +115,8 @@ func OpenInBrowser(url, browser string) error {
 		} else {
 			cmd = exec.Command("xdg-open", url)
 		}
+	case "android":
+		cmd = exec.Command("xdg-open", url)
 	case "windows":
 		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
 	default:

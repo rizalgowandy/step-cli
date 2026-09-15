@@ -5,14 +5,16 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/urfave/cli"
+
 	"github.com/smallstep/certificates/ca"
+	"github.com/smallstep/cli-utils/errs"
+	"github.com/smallstep/linkedca"
+
 	"github.com/smallstep/cli/command/ca/policy/policycontext"
 	"github.com/smallstep/cli/flags"
 	"github.com/smallstep/cli/internal/command"
 	"github.com/smallstep/cli/utils/cautils"
-	"github.com/urfave/cli"
-	"go.step.sm/cli-utils/errs"
-	"go.step.sm/linkedca"
 )
 
 // ViewCommand returns the policy view subcommand
@@ -54,7 +56,7 @@ $ step ca policy acme view --provisioner my_acme_provisioner --eab-key-id "lUOTG
 			viewAction,
 		),
 		Flags: []cli.Flag{
-			provisionerFilterFlag,
+			flags.Provisioner,
 			flags.EABKeyID,
 			flags.EABReference,
 			flags.AdminCert,
@@ -70,19 +72,18 @@ $ step ca policy acme view --provisioner my_acme_provisioner --eab-key-id "lUOTG
 }
 
 func viewAction(ctx context.Context) (err error) {
-	clictx := command.CLIContextFromContext(ctx)
-	provisioner := clictx.String("provisioner")
-	reference := clictx.String("eab-key-reference")
-	keyID := clictx.String("eab-key-id")
+	var (
+		provisioner = retrieveAndUnsetProvisionerFlagIfRequired(ctx)
+		clictx      = command.CLIContextFromContext(ctx)
+		reference   = clictx.String("eab-key-reference")
+		keyID       = clictx.String("eab-key-id")
+		policy      *linkedca.Policy
+	)
 
 	client, err := cautils.NewAdminClient(clictx)
 	if err != nil {
 		return fmt.Errorf("error creating admin client: %w", err)
 	}
-
-	var (
-		policy *linkedca.Policy
-	)
 
 	switch {
 	case policycontext.IsAuthorityPolicyLevel(ctx):

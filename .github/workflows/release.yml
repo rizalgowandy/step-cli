@@ -6,22 +6,27 @@ on:
     tags:
     - 'v*' # Push events to matching v*, i.e. v1.0, v20.15.10
 
+permissions:
+  contents: read
+
 jobs:
   ci:
     permissions:
       actions: read
       contents: read
       security-events: write
-    uses: smallstep/cli/.github/workflows/ci.yml@master
+    uses: ./.github/workflows/ci.yml
     secrets: inherit
 
-  create_release:
-    name: Create Release
+  release_metadata:
+    name: Release Metadata
+    permissions:
+      contents: read
     needs: ci
     runs-on: ubuntu-latest
     env:
       DOCKER_IMAGE: smallstep/step-cli
-      DEBIAN_TAG: bookworm
+      DEBIAN_TAG: trixie
     outputs:
       version: ${{ steps.extract-tag.outputs.VERSION }}
       vversion: ${{ steps.extract-tag.outputs.VVERSION }}
@@ -31,9 +36,11 @@ jobs:
     steps:
       - name: Is Pre-release
         id: is_prerelease
+        env:
+          REF: ${{ github.ref }}
         run: |
           set +e
-          echo ${{ github.ref }} | grep "\-rc.*"
+          echo "${REF}" | grep "\-rc.*"
           OUT=$?
           if [ $OUT -eq 0 ]; then IS_PRERELEASE=true; else IS_PRERELEASE=false; fi
           echo "IS_PRERELEASE=${IS_PRERELEASE}" >> "${GITHUB_OUTPUT}"
@@ -51,19 +58,9 @@ jobs:
         run: |
           echo "DOCKER_TAGS=${{ env.DOCKER_TAGS }},${{ env.DOCKER_IMAGE }}:latest" >> "${GITHUB_ENV}"
           echo "DOCKER_TAGS_DEBIAN=${{ env.DOCKER_TAGS_DEBIAN }},${{ env.DOCKER_IMAGE }}:${DEBIAN_TAG}" >> "${GITHUB_ENV}"
-      - name: Create Release
-        id: create_release
-        uses: softprops/action-gh-release@c062e08bd532815e2082a85e87e3ef29c3e6d191 # v2.0.8
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: Release ${{ github.ref_name }}
-          draft: false
-          prerelease: ${{ steps.is_prerelease.outputs.IS_PRERELEASE }}
 
   goreleaser:
-    needs: create_release
+    needs: release_metadata
     permissions:
       id-token: write
       contents: write
@@ -71,33 +68,33 @@ jobs:
     uses: smallstep/workflows/.github/workflows/goreleaser.yml@main
     with:
       enable-packages-upload: true
-      is-prerelease: ${{ needs.create_release.outputs.is_prerelease == 'true' }}
+      is-prerelease: ${{ needs.release_metadata.outputs.is_prerelease == 'true' }}
     secrets: inherit
 
   build_upload_docker:
     name: Build & Upload Docker Images
-    needs: create_release
+    needs: release_metadata
     permissions:
       id-token: write
-      contents: write
+      contents: read
     uses: smallstep/workflows/.github/workflows/docker-buildx-push.yml@main
     with:
       platforms: linux/amd64,linux/386,linux/arm,linux/arm64
-      tags: ${{ needs.create_release.outputs.docker_tags }}
+      tags: ${{ needs.release_metadata.outputs.docker_tags }}
       docker_image: smallstep/step-cli
       docker_file: docker/Dockerfile
     secrets: inherit
 
   build_upload_docker_debian:
     name: Build & Upload Docker Images using Debian
-    needs: create_release
+    needs: release_metadata
     permissions:
       id-token: write
-      contents: write
+      contents: read
     uses: smallstep/workflows/.github/workflows/docker-buildx-push.yml@main
     with:
       platforms: linux/amd64,linux/386,linux/arm,linux/arm64
-      tags: ${{ needs.create_release.outputs.docker_tags_debian }}
+      tags: ${{ needs.release_metadata.outputs.docker_tags_debian }}
       docker_image: smallstep/step-cli
       docker_file: docker/Dockerfile.debian
     secrets: inherit
@@ -106,14 +103,16 @@ jobs:
 
   update_reference_docs:
     name: Update Reference Docs
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
-    needs: create_release
-    if: needs.create_release.outputs.is_prerelease == 'false'
+    needs: release_metadata
+    if: needs.release_metadata.outputs.is_prerelease == 'false'
     steps:
       - name: Checkout
-        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Setup Go
-        uses: actions/setup-go@0a12ed9d6a96ab950c8f026ed9f722fe0da7ef32 # v5.0.2
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: 'stable'
           check-latest: true
@@ -121,13 +120,13 @@ jobs:
         id: build
         run: V=1 make build
       - name: Checkout Docs
-        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: smallstep/docs
           token: ${{ secrets.DOCS_PAT }}
           path: './docs'
       - name: Setup bot SSH signing key
-        uses: webfactory/ssh-agent@dc588b651fe13675774614f8e6a936a468676387 # v0.9.0
+        uses: webfactory/ssh-agent@e83874834305fe9a4a2997156cb26c5de65a8555 # v0.10.0
         env:
           HAS_SSH_PRIVATE_KEY: ${{ secrets.STEP_TRAVIS_CI_GH_PRIVATE_SIGNING_KEY != '' }}
         if: ${{ env.HAS_SSH_PRIVATE_KEY == 'true' }}
@@ -140,7 +139,7 @@ jobs:
           cd ./docs
 
           git config user.email "eng+ci@smallstep.com"
-          git config user.name "step-travis-ci"
+          git config user.name "step-ci"
 
           # Configure GH commit signing key.
           git config --global commit.gpgsign true
@@ -162,17 +161,17 @@ jobs:
           ]' > "$RUNNER_TEMP/reference-routes.json"
 
           # Replace old route manifest with new
-          jq --argfile newRoutes "$RUNNER_TEMP/reference-routes.json" 'walk(
+          jq --slurpfile newRoutes "$RUNNER_TEMP/reference-routes.json" 'walk(
             if type == "object" and .isStepReference == true then
-              .routes = $newRoutes
+              .routes = $newRoutes[0]
             else . end
           )' < manifest.json > manifest.json.new
 
           mv manifest.json.new manifest.json
 
-          git add . && git commit -a -m "step-cli ${{ needs.create_release.outputs.vversion }} reference update"
+          git add . && git commit -a -m "step-cli ${{ needs.release_metadata.outputs.vversion }} reference update"
       - name: Push changes
-        uses: ad-m/github-push-action@d91a481090679876dfc4178fef17f286781251df # v0.8.0
+        uses: ad-m/github-push-action@881a6320fdb16eb5318c5054f31c218aec2b324c # v1.3.0
         with:
           github_token: ${{ secrets.DOCS_PAT }}
           branch: 'main'

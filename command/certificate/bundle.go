@@ -5,12 +5,14 @@ import (
 	"os"
 
 	"github.com/pkg/errors"
-	"github.com/smallstep/cli/flags"
-	"github.com/smallstep/cli/utils"
 	"github.com/urfave/cli"
-	"go.step.sm/cli-utils/command"
-	"go.step.sm/cli-utils/errs"
-	"go.step.sm/cli-utils/ui"
+
+	"github.com/smallstep/cli-utils/command"
+	"github.com/smallstep/cli-utils/errs"
+	"github.com/smallstep/cli-utils/fileutil"
+	"github.com/smallstep/cli-utils/ui"
+
+	"github.com/smallstep/cli/flags"
 )
 
 func bundleCommand() cli.Command {
@@ -75,8 +77,8 @@ func bundleAction(ctx *cli.Context) error {
 	}
 
 	chainFile := ctx.Args().Get(2)
-	if err := utils.WriteFile(chainFile,
-		append(pem.EncodeToMemory(crtBlock), pem.EncodeToMemory(caBlock)...), 0600); err != nil {
+	if err := fileutil.WriteFile(chainFile,
+		append(pem.EncodeToMemory(crtBlock), pem.EncodeToMemory(caBlock)...), 0o600); err != nil {
 		return err
 	}
 
